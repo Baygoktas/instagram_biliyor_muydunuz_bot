@@ -30,8 +30,8 @@ export default {
 };
 
 const WIKI_HEADERS = {
-  "User-Agent": "WikipediaInstagramBot/1.0 (contact: telegramherokuhesabi3@gmail.com)",
-  "Api-User-Agent": "WikipediaInstagramBot/1.0 (contact: telegramherokuhesabi3@gmail.com)",
+  "User-Agent": "WikipediaInstagramBot/2.0 (contact: telegramherokuhesabi3@gmail.com)",
+  "Api-User-Agent": "WikipediaInstagramBot/2.0 (contact: telegramherokuhesabi3@gmail.com)",
   "Accept": "application/json"
 };
 
@@ -45,16 +45,15 @@ async function fetchWithRetry(url, options = {}, retries = 2) {
 }
 
 async function runInstagramBot(env, origin = "") {
-  const TELEGRAM_BOT_TOKEN = env.TELEGRAM_BOT_TOKEN || "7498614075:AAHepFlPgEvvohNwg-BWUrgAW1OrbxEUXeo";
-  // Kendi Telegram kullanıcı/özel chat ID'nizi buraya yazın:
-  const TELEGRAM_CHAT_ID = env.TELEGRAM_CHAT_ID || "1283445630";
-  const WATERMARK = env.CHANNEL_WATERMARK || "@sayfa_kullanici_adiniz";
+  const TELEGRAM_BOT_TOKEN = env.TELEGRAM_BOT_TOKEN || "BURAYA_BOT_TOKENINIZ";
+  const TELEGRAM_CHAT_ID = env.TELEGRAM_CHAT_ID || "BURAYA_OZEL_TELEGRAM_CHAT_ID";
+  const WATERMARK = env.CHANNEL_WATERMARK || "@Tarihtebugun";
 
   if (!TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN.includes("BURAYA_BOT")) {
     throw new Error("TELEGRAM_BOT_TOKEN tanımlanmadı!");
   }
   if (!TELEGRAM_CHAT_ID || TELEGRAM_CHAT_ID.includes("BURAYA_OZEL")) {
-    throw new Error("TELEGRAM_CHAT_ID tanımlanmadı! Lütfen kendi özel chat ID'nizi girin.");
+    throw new Error("TELEGRAM_CHAT_ID tanımlanmadı!");
   }
 
   const now = new Date();
@@ -97,7 +96,6 @@ async function runInstagramBot(env, origin = "") {
   let rawWikitext = "";
   let imageUrl = null;
 
-  // Sadece GÖRSEL İÇEREN sayfaları filtrele
   for (const item of shuffled) {
     if (env.DB) {
       const row = await env.DB.prepare("SELECT page_title FROM sent_facts WHERE page_title = ?")
@@ -162,20 +160,43 @@ async function runInstagramBot(env, origin = "") {
     ]
   };
 
-  const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: TELEGRAM_CHAT_ID,
-      photo: imageUrl,
-      caption: messageText,
-      parse_mode: "HTML",
-      reply_markup: replyMarkup
-    })
-  });
+  let sentSuccessfully = false;
 
-  const photoData = await res.json();
-  if (!photoData.ok) throw new Error(`Telegram Hatası: ${photoData.description}`);
+  // 1. Önce Fotoğraflı Gönderim Dene
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CHAT_ID,
+        photo: imageUrl,
+        caption: messageText,
+        parse_mode: "HTML",
+        reply_markup: replyMarkup
+      })
+    });
+    const photoData = await res.json();
+    if (photoData.ok) sentSuccessfully = true;
+  } catch (e) {
+    console.error("Fotoğraf gönderiminde hata:", e);
+  }
+
+  // 2. Telegram URL çekme hatası verirse butonları ve linkleri metin mesajıyla ilet
+  if (!sentSuccessfully) {
+    const resMsg = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CHAT_ID,
+        text: messageText,
+        parse_mode: "HTML",
+        reply_markup: replyMarkup,
+        disable_web_page_preview: false
+      })
+    });
+    const msgData = await resMsg.json();
+    if (!msgData.ok) throw new Error(`Telegram Hatası: ${msgData.description}`);
+  }
 
   if (env.DB) {
     const factHash = simpleHash(cleanText);
@@ -187,16 +208,17 @@ async function runInstagramBot(env, origin = "") {
   return `Başarılı! Özel sohbetinize taslak gönderildi: ${selected.title}`;
 }
 
+// Görsel Render Motoru
 function handleImageGeneration(url) {
   const text = url.searchParams.get("text") || "Bunu biliyor muydunuz?";
   const bgImg = url.searchParams.get("img") || "";
-  const watermark = url.searchParams.get("wm") || "@sayfa_kullanici_adiniz";
+  const watermark = url.searchParams.get("wm") || "@Tarihtebugun";
   const ratio = url.searchParams.get("ratio") || "square";
 
   const width = 1080;
   const height = ratio === "portrait" ? 1350 : 1080;
 
-  const maxLineChars = ratio === "portrait" ? 28 : 32;
+  const maxLineChars = ratio === "portrait" ? 30 : 34;
   const words = text.split(" ");
   const lines = [];
   let cur = "";
@@ -211,9 +233,12 @@ function handleImageGeneration(url) {
   }
   if (cur) lines.push(cur.trim());
 
-  const lineHeight = 56;
+  const lineHeight = 54;
   const totalTextHeight = lines.length * lineHeight;
-  const startY = (height / 2) - (totalTextHeight / 2) + 40;
+  
+  const bottomMargin = ratio === "portrait" ? 160 : 130;
+  const startY = height - bottomMargin - totalTextHeight;
+  const badgeY = startY - 70;
 
   const tspanLines = lines
     .map((line, idx) => `<tspan x="540" y="${startY + idx * lineHeight}">${escapeXml(line)}</tspan>`)
@@ -222,38 +247,48 @@ function handleImageGeneration(url) {
   const svg = `
   <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
     <defs>
-      <linearGradient id="grad" x1="0%" y1="0%" x2="0%" y2="100%">
-        <stop offset="0%" stop-color="#000000" stop-opacity="0.65" />
-        <stop offset="50%" stop-color="#000000" stop-opacity="0.80" />
-        <stop offset="100%" stop-color="#000000" stop-opacity="0.95" />
+      <linearGradient id="bottomGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+        <stop offset="0%" stop-color="#000000" stop-opacity="0.05" />
+        <stop offset="40%" stop-color="#000000" stop-opacity="0.25" />
+        <stop offset="65%" stop-color="#000000" stop-opacity="0.80" />
+        <stop offset="100%" stop-color="#000000" stop-opacity="0.96" />
       </linearGradient>
-      <filter id="shadow">
-        <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000" flood-opacity="0.8"/>
+
+      <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+        <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#000000" flood-opacity="0.9"/>
       </filter>
     </defs>
 
-    <rect width="${width}" height="${height}" fill="#111" />
-    ${bgImg ? `<image href="${escapeXml(bgImg)}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" opacity="0.45" />` : ""}
-    <rect width="${width}" height="${height}" fill="url(#grad)" />
+    <rect width="${width}" height="${height}" fill="#0a0a0a" />
 
-    <rect x="40" y="40" width="${width - 80}" height="${height - 80}" fill="none" stroke="#f59e0b" stroke-width="3" stroke-opacity="0.4" rx="24" />
+    ${bgImg ? `<image href="${escapeXml(bgImg)}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" opacity="0.90" />` : ""}
 
-    <g transform="translate(540, 150)">
-      <rect x="-190" y="-35" width="380" height="70" rx="35" fill="#f59e0b" />
-      <text text-anchor="middle" y="9" fill="#000000" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="24" font-weight="900" letter-spacing="2">
+    <rect width="${width}" height="${height}" fill="url(#bottomGrad)" />
+
+    <!-- Sol Üst Filigran Rozeti -->
+    <g transform="translate(60, 80)">
+      <rect x="0" y="0" width="${watermark.length * 16 + 40}" height="46" rx="23" fill="#000000" fill-opacity="0.55" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5" />
+      <circle cx="23" cy="23" r="6" fill="#f59e0b" />
+      <text x="38" y="29" fill="#f3f4f6" font-family="'Inter', -apple-system, BlinkMacSystemFont, 'Montserrat', Roboto, sans-serif" font-size="20" font-weight="700" letter-spacing="0.5">
+        ${escapeXml(watermark)}
+      </text>
+    </g>
+
+    <!-- BİLİYOR MUYDUNUZ? Rozeti -->
+    <g transform="translate(540, ${badgeY})">
+      <rect x="-160" y="-30" width="320" height="60" rx="30" fill="#f59e0b" filter="url(#softShadow)" />
+      <text text-anchor="middle" y="8" fill="#000000" font-family="'Inter', -apple-system, BlinkMacSystemFont, 'Montserrat', sans-serif" font-size="20" font-weight="900" letter-spacing="2.5">
         BİLİYOR MUYDUNUZ?
       </text>
     </g>
 
-    <text text-anchor="middle" fill="#ffffff" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="40" font-weight="700" filter="url(#shadow)">
+    <!-- Bilgi Metni -->
+    <text text-anchor="middle" fill="#ffffff" font-family="'Inter', -apple-system, BlinkMacSystemFont, 'Montserrat', 'Helvetica Neue', sans-serif" font-size="38" font-weight="700" letter-spacing="0.2" filter="url(#softShadow)">
       ${tspanLines}
     </text>
 
-    <g transform="translate(540, ${height - 90})">
-      <text text-anchor="middle" fill="#f59e0b" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="28" font-weight="700" letter-spacing="1">
-        ${escapeXml(watermark)}
-      </text>
-    </g>
+    <!-- Alt Çizgi -->
+    <line x1="440" y1="${height - 50}" x2="640" y2="${height - 50}" stroke="#f59e0b" stroke-width="4" stroke-linecap="round" opacity="0.8" />
   </svg>
   `;
 
@@ -276,20 +311,26 @@ function escapeXml(s) {
 
 async function fetchWikipediaImageUrl(fileName) {
   try {
+    const ext = fileName.split(".").pop().toLowerCase();
+    if (["svg", "tif", "tiff", "ogg", "ogv", "pdf"].includes(ext)) {
+      return null;
+    }
+
     const imgApiUrl = new URL("https://tr.wikipedia.org/w/api.php");
     imgApiUrl.search = new URLSearchParams({
       action: "query",
       titles: `File:${fileName}`,
       prop: "imageinfo",
       iiprop: "url",
+      iiurlwidth: "1200",
       format: "json",
       formatversion: "2"
     });
     const res = await fetchWithRetry(imgApiUrl, { headers: WIKI_HEADERS });
     const data = await res.json();
     const pages = data?.query?.pages;
-    if (pages && pages[0]?.imageinfo && pages[0].imageinfo[0]?.url) {
-      return pages[0].imageinfo[0].url;
+    if (pages && pages[0]?.imageinfo && pages[0].imageinfo[0]) {
+      return pages[0].imageinfo[0].thumburl || pages[0].imageinfo[0].url;
     }
   } catch (e) {
     return null;
