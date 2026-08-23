@@ -1,5 +1,5 @@
-const BOT_TOKEN = "7498614075:AAHepFlPgEvvohNwg-BWUrgAW1OrbxEUXeo";
-const MY_CHAT_ID = "1283445630";
+const TELEGRAM_BOT_TOKEN = "7498614075:AAHepFlPgEvvohNwg-BWUrgAW1OrbxEUXeo";
+const AUTHORIZED_CHAT_ID = "1283445630"; // Sadece sizin ID'niz
 const WATERMARK = "@Tarihtebugun";
 
 export default {
@@ -8,145 +8,171 @@ export default {
 
     if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
 
-    // 1. Instagram Görsel SVG Motoru
+    // 1. Instagram Görselini Üreten Endpoint
     if (url.pathname === "/image") {
       return handleImageGeneration(url);
     }
 
-    // 2. Telegram Webhook Gelen Komutlar (/hazirla)
+    // 2. Webhook Kurulumu İçin (/set-webhook)
+    if (url.pathname === "/set-webhook") {
+      const webhookUrl = `${url.origin}/webhook`;
+      const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
+      const data = await res.json();
+      return new Response(JSON.stringify(data, null, 2), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // 3. Telegram Webhook Gelen Mesaj İşleyici
     if (url.pathname === "/webhook" && request.method === "POST") {
       try {
         const update = await request.json();
         if (update.message && update.message.text) {
           const chatId = String(update.message.chat.id);
-          const text = update.message.text.trim().toLowerCase();
+          const text = update.message.text.trim();
 
-          if (text === "/hazirla" || text === "/start" || text === "hazırla" || text === "hazirla") {
-            ctx.waitUntil(generateAndSendPost(env, chatId, url.origin));
+          // Sadece sizin yetkili ID'nizden gelen komutları dinler
+          if (chatId === String(AUTHORIZED_CHAT_ID)) {
+            if (text === "/hazirla" || text === "/start" || text === "hazırla" || text === "Hazırla") {
+              ctx.waitUntil(generateAndSendPost(env, chatId, url.origin));
+            }
           }
         }
       } catch (err) {
-        console.error("Webhook hatası:", err);
+        console.error("Webhook parse hatası:", err);
       }
       return new Response("OK", { status: 200 });
     }
 
-    // 3. Tarayıcıdan Açıldığında Otomatik Webhook Bağlar ve Test Mesajı Atar
+    // Tarayıcıdan manuel tetikleme
     try {
-      const webhookUrl = `${url.origin}/webhook`;
-      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
-
-      const result = await generateAndSendPost(env, MY_CHAT_ID, url.origin);
-      return new Response(`Webhook Aktif!\n\n${result}`, {
+      const result = await generateAndSendPost(env, AUTHORIZED_CHAT_ID, url.origin);
+      return new Response(result || "İşlem tamamlandı.", {
         headers: { "Content-Type": "text/plain; charset=utf-8" }
       });
     } catch (err) {
-      return new Response(`Hata Detayı:\n${err.message}\n\n${err.stack}`, {
-        status: 200,
-        headers: { "Content-Type": "text/plain; charset=utf-8" }
-      });
+      return new Response(`Hata:\n${err.message}`, { status: 500 });
     }
   }
 };
 
 const WIKI_HEADERS = {
-  "User-Agent": "WikipediaInstagramBot/13.0 (contact: telegramherokuhesabi3@gmail.com)",
+  "User-Agent": "WikipediaInstagramBot/3.0 (contact: telegramherokuhesabi3@gmail.com)",
+  "Api-User-Agent": "WikipediaInstagramBot/3.0 (contact: telegramherokuhesabi3@gmail.com)",
   "Accept": "application/json"
 };
 
+async function fetchWithRetry(url, options = {}, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    const res = await fetch(url, options);
+    if (res.status !== 429 && res.status !== 503) return res;
+    await new Promise(r => setTimeout(r, (i + 1) * 1500));
+  }
+  return fetch(url, options);
+}
+
 async function generateAndSendPost(env, chatId, origin) {
-  // 2012 - 2024 yılları arasından rastgele bir yıl seç
-  const randomYil = Math.floor(Math.random() * (2024 - 2012 + 1)) + 2012;
-  const pageTitle = `Vikipedi:Biliyor muydunuz/Arşiv/${randomYil}`;
+  const cutoff = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
+  const start = new Date("2010-01-01T00:00:00Z");
 
-  let selectedFact = null;
+  const randomMs = Math.floor(Math.random() * (cutoff.getTime() - start.getTime()));
+  const targetDate = new Date(start.getTime() + randomMs);
+  const targetDateStr = targetDate.toISOString().slice(0, 10);
 
-  try {
+  const listUrl = new URL("https://tr.wikipedia.org/w/api.php");
+  listUrl.search = new URLSearchParams({
+    action: "query",
+    list: "allpages",
+    apnamespace: "4",
+    apprefix: "Biliyor_muydunuz?/",
+    aplimit: "50",
+    format: "json",
+    formatversion: "2",
+    apfrom: `Biliyor_muydunuz?/${targetDateStr}`
+  });
+
+  const listRes = await fetchWithRetry(listUrl, { headers: WIKI_HEADERS });
+  const listData = await listRes.json();
+  const pages = listData?.query?.allpages || [];
+
+  const candidates = pages
+    .map(p => p.title || "")
+    .map(title => {
+      const m = title.match(/(\d{4})-(\d{2})-(\d{2})$/);
+      return m ? { title, date: `${m[1]}-${m[2]}-${m[3]}` } : null;
+    })
+    .filter(Boolean)
+    .filter(x => new Date(x.date).getTime() < cutoff.getTime());
+
+  if (!candidates.length) return "Aday sayfa bulunamadı.";
+
+  const shuffled = candidates.sort(() => 0.5 - Math.random());
+  let selected = null;
+  let rawWikitext = "";
+  let imageUrl = null;
+
+  for (const item of shuffled) {
+    if (env.DB) {
+      const row = await env.DB.prepare("SELECT page_title FROM sent_facts WHERE page_title = ?")
+        .bind(item.title)
+        .first();
+      if (row) continue;
+    }
+
     const parseUrl = new URL("https://tr.wikipedia.org/w/api.php");
     parseUrl.search = new URLSearchParams({
       action: "parse",
-      page: pageTitle,
+      page: item.title,
       format: "json",
       formatversion: "2",
       prop: "wikitext",
       redirects: "1"
     });
 
-    const res = await fetch(parseUrl, { headers: WIKI_HEADERS });
-    const data = await res.json();
-    const wikitext = data?.parse?.wikitext || "";
+    const parseRes = await fetchWithRetry(parseUrl, { headers: WIKI_HEADERS });
+    const parseData = await parseRes.json();
+    const content = parseData?.parse?.wikitext || "";
 
-    if (wikitext) {
-      // Satırları ayır ve karıştır
-      const rawLines = wikitext.split("\n");
-      const validItems = [];
-
-      for (let i = 0; i < rawLines.length; i++) {
-        const line = rawLines[i].trim();
-        // Madde işaretiyle başlayan veya görsel içeren satırları topla
-        if (line.startsWith("*") || line.startsWith("...") || line.includes("[[Dosya:") || line.includes("[[File:")) {
-          // Görseli ara
-          const imgMatch = line.match(/\[\[(?:Dosya|Resim|File|Media):([^|\]\n]+)/i);
-          if (imgMatch && imgMatch[1]) {
-            const fileName = imgMatch[1].trim();
-            const textClean = temizleWikitext(line);
-
-            // Kural/yönerge olmayan gerçek bilgi cümleleri
-            if (
-              textClean.length > 35 &&
-              !textClean.toLowerCase().includes("standart resim") &&
-              !textClean.toLowerCase().includes("madde önerileri") &&
-              !textClean.toLowerCase().includes("arşiv")
-            ) {
-              validItems.push({ fileName, text: textClean });
-            }
-          }
-        }
-      }
-
-      if (validItems.length > 0) {
-        const shuffled = validItems.sort(() => 0.5 - Math.random());
-        for (const item of shuffled) {
-          const imgUrl = await fetchWikipediaImageUrl(item.fileName);
-          if (imgUrl) {
-            selectedFact = {
-              title: pageTitle,
-              text: item.text,
-              imageUrl: imgUrl
-            };
-            break;
-          }
-        }
+    const imageMatch = content.match(/\[\[(?:Dosya|File|Media):([^|\]]+)/i);
+    if (imageMatch && imageMatch[1]) {
+      const resolvedUrl = await fetchWikipediaImageUrl(imageMatch[1].trim());
+      if (resolvedUrl) {
+        selected = item;
+        rawWikitext = content;
+        imageUrl = resolvedUrl;
+        break;
       }
     }
-  } catch (e) {
-    console.error(e);
   }
 
-  // Havuzdan bulunamazsa kaliteli yedek içerik
-  if (!selectedFact) {
-    selectedFact = {
-      title: "Vikipedi:Biliyor muydunuz",
-      text: "Galata Kulesi, 528 yılında Bizans İmparatoru Anastasius tarafından fener kulesi olarak inşa ettirilmiştir.",
-      imageUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Galata_Tower_Istanbul.jpg/1200px-Galata_Tower_Istanbul.jpg"
-    };
+  if (!selected || !imageUrl) {
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: "⚠️ Görselli yeni bir içerik bulunamadı. Lütfen tekrar /hazirla yazın."
+      })
+    });
+    return "Görselli içerik bulunamadı.";
   }
 
-  const encodedTitle = encodeURIComponent(selectedFact.title.replace(/ /g, "_"));
+  let cleanText = temizleWikitext(rawWikitext);
+  cleanText = cleanText.replace(/^(?:Vikipedi|Biliyor muydu(?:nuz)?\??|Arşiv|Ana sayfa)[^.!?]*[.!?]?\s*/i, "").trim();
+
+  const encodedTitle = encodeURIComponent(selected.title.replace(/ /g, "_"));
   const dynamicSourceUrl = `https://tr.wikipedia.org/wiki/${encodedTitle}`;
 
+  // Instagram Açıklama Taslağı
   const instagramCaption = 
 `💡 Bunu biliyor muydunuz?
 
-${selectedFact.text}
+${cleanText}
 
 📌 Daha fazla ilginç ve tarihi bilgi için takipte kalın!
 .
 .
 #tarih #tarihtebugun #bunubiliyormuydunuz #bilgi #genelkültür #tarihieser #tariharsivi`;
-
-  const squareUrl = `${origin}/image?text=${encodeURIComponent(selectedFact.text)}&img=${encodeURIComponent(selectedFact.imageUrl)}&wm=${encodeURIComponent(WATERMARK)}&ratio=square`;
-  const portraitUrl = `${origin}/image?text=${encodeURIComponent(selectedFact.text)}&img=${encodeURIComponent(selectedFact.imageUrl)}&wm=${encodeURIComponent(WATERMARK)}&ratio=portrait`;
 
   const telegramMessage =
 `✨ <b>YENİ İNSTAGRAM İÇERİĞİNİZ HAZIR!</b>
@@ -156,33 +182,44 @@ ${selectedFact.text}
 
 🔗 <b>Kaynak:</b> <a href="${dynamicSourceUrl}">Vikipedi</a>
 
-👇 <i>Aşağıdaki butonlardan formatı seçip görseli indirebilirsiniz:</i>`;
+👇 <i>Aşağıdan görsel formatını seçip indirin:</i>`;
+
+  const squareParams = new URLSearchParams({ text: cleanText, img: imageUrl, wm: WATERMARK, ratio: "square" });
+  const portraitParams = new URLSearchParams({ text: cleanText, img: imageUrl, wm: WATERMARK, ratio: "portrait" });
 
   const replyMarkup = {
     inline_keyboard: [
       [
-        { text: "📥 Instagram Kare (1:1)", url: squareUrl },
-        { text: "📥 Instagram Portre (4:5)", url: portraitUrl }
+        { text: "📥 Instagram Kare (1:1)", url: `${origin}/image?${squareParams.toString()}` },
+        { text: "📥 Instagram Portre (4:5)", url: `${origin}/image?${portraitParams.toString()}` }
       ]
     ]
   };
 
-  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+  // Telegram'a gönder
+  await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       chat_id: chatId,
-      text: telegramMessage,
+      photo: imageUrl,
+      caption: telegramMessage,
       parse_mode: "HTML",
-      reply_markup: replyMarkup,
-      disable_web_page_preview: false
+      reply_markup: replyMarkup
     })
   });
 
-  return `Başarılı! Gönderildi (${selectedFact.title})`;
+  if (env.DB) {
+    const factHash = simpleHash(cleanText);
+    await env.DB.prepare("INSERT OR IGNORE INTO sent_facts (page_title, fact_hash) VALUES (?, ?)")
+      .bind(selected.title, factHash)
+      .run();
+  }
+
+  return `Başarılı! Gönderildi: ${selected.title}`;
 }
 
-// Görsel SVG Render Motoru
+// Görsel Render Motoru (Gelişmiş Instagram SVG Tasarımı)
 function handleImageGeneration(url) {
   const text = url.searchParams.get("text") || "Bunu biliyor muydunuz?";
   const bgImg = url.searchParams.get("img") || "";
@@ -192,7 +229,7 @@ function handleImageGeneration(url) {
   const width = 1080;
   const height = ratio === "portrait" ? 1350 : 1080;
 
-  const maxLineChars = ratio === "portrait" ? 28 : 32;
+  const maxLineChars = ratio === "portrait" ? 30 : 34;
   const words = text.split(" ");
   const lines = [];
   let cur = "";
@@ -207,10 +244,10 @@ function handleImageGeneration(url) {
   }
   if (cur) lines.push(cur.trim());
 
-  const lineHeight = 52;
+  const lineHeight = 54;
   const totalTextHeight = lines.length * lineHeight;
   
-  const bottomMargin = ratio === "portrait" ? 150 : 120;
+  const bottomMargin = ratio === "portrait" ? 160 : 130;
   const startY = height - bottomMargin - totalTextHeight;
   const badgeY = startY - 70;
 
@@ -223,8 +260,8 @@ function handleImageGeneration(url) {
     <defs>
       <linearGradient id="bottomGrad" x1="0%" y1="0%" x2="0%" y2="100%">
         <stop offset="0%" stop-color="#000000" stop-opacity="0.05" />
-        <stop offset="35%" stop-color="#000000" stop-opacity="0.30" />
-        <stop offset="65%" stop-color="#000000" stop-opacity="0.82" />
+        <stop offset="40%" stop-color="#000000" stop-opacity="0.25" />
+        <stop offset="65%" stop-color="#000000" stop-opacity="0.80" />
         <stop offset="100%" stop-color="#000000" stop-opacity="0.96" />
       </linearGradient>
 
@@ -234,7 +271,9 @@ function handleImageGeneration(url) {
     </defs>
 
     <rect width="${width}" height="${height}" fill="#0a0a0a" />
+
     ${bgImg ? `<image href="${escapeXml(bgImg)}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" opacity="0.90" />` : ""}
+
     <rect width="${width}" height="${height}" fill="url(#bottomGrad)" />
 
     <!-- Sol Üst Filigran Rozeti -->
@@ -255,11 +294,11 @@ function handleImageGeneration(url) {
     </g>
 
     <!-- Bilgi Metni -->
-    <text text-anchor="middle" fill="#ffffff" font-family="'Inter', -apple-system, BlinkMacSystemFont, 'Montserrat', 'Helvetica Neue', sans-serif" font-size="36" font-weight="700" letter-spacing="0.2" filter="url(#softShadow)">
+    <text text-anchor="middle" fill="#ffffff" font-family="'Inter', -apple-system, BlinkMacSystemFont, 'Montserrat', 'Helvetica Neue', sans-serif" font-size="38" font-weight="700" letter-spacing="0.2" filter="url(#softShadow)">
       ${tspanLines}
     </text>
 
-    <!-- Alt Çizgi -->
+    <!-- Alt İnce Çizgi -->
     <line x1="440" y1="${height - 50}" x2="640" y2="${height - 50}" stroke="#f59e0b" stroke-width="4" stroke-linecap="round" opacity="0.8" />
   </svg>
   `;
@@ -283,21 +322,20 @@ function escapeXml(s) {
 
 async function fetchWikipediaImageUrl(fileName) {
   try {
-    const cleanName = fileName.replace(/^(?:Dosya|Resim|File|Image):/i, "").trim();
-    const ext = cleanName.split(".").pop().toLowerCase();
+    const ext = fileName.split(".").pop().toLowerCase();
     if (["svg", "tif", "tiff", "ogg", "ogv", "pdf"].includes(ext)) return null;
 
     const imgApiUrl = new URL("https://tr.wikipedia.org/w/api.php");
     imgApiUrl.search = new URLSearchParams({
       action: "query",
-      titles: `File:${cleanName}`,
+      titles: `File:${fileName}`,
       prop: "imageinfo",
       iiprop: "url",
       iiurlwidth: "1200",
       format: "json",
       formatversion: "2"
     });
-    const res = await fetch(imgApiUrl, { headers: WIKI_HEADERS });
+    const res = await fetchWithRetry(imgApiUrl, { headers: WIKI_HEADERS });
     const data = await res.json();
     const pages = data?.query?.pages;
     if (pages && pages[0]?.imageinfo && pages[0].imageinfo[0]) {
@@ -316,13 +354,12 @@ function temizleWikitext(s) {
     .replace(/<gallery[\s\S]*?<\/gallery>/gi, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/\{\{[^{}]*\}\}/g, " ")
-    .replace(/\[\[(?:Dosya|Resim|File|Media):[^\]]+\]\]/gi, " ")
+    .replace(/\[\[(?:Dosya|File|Media):[^\]]+\]\]/gi, " ")
     .replace(/\[\[([^|\]]+)\|([^\]]+)\]\]/g, "$2")
     .replace(/\[\[([^\]]+)\]\]/g, "$1")
     .replace(/\[https?:\/\/[^\s\]]+\s+([^\]]+)\]/g, "$1")
     .replace(/'{2,3}/g, "")
     .replace(/\b\d{2,4}x\d{2,4}px\b/gi, " ")
-    .replace(/^[;*.]+\s*/, "")
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
     .replace(/&quot;/gi, '"')
@@ -340,3 +377,12 @@ function escapeHtml(s) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
+
+function simpleHash(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return String(hash);
+        }
