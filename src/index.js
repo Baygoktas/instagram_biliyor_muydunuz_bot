@@ -8,7 +8,7 @@ export default {
 
     if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
 
-    // Görsel Üretim Endpoint'i
+    // Görsel Oluşturma Endpoint'i
     if (url.pathname === "/image") {
       return handleImageGeneration(url);
     }
@@ -23,7 +23,7 @@ export default {
       });
     }
 
-    // Webhook Mesaj Alıcı
+    // Telegram Webhook Alıcısı
     if (url.pathname === "/webhook" && request.method === "POST") {
       try {
         const update = await request.json();
@@ -43,165 +43,130 @@ export default {
       return new Response("OK", { status: 200 });
     }
 
-    // Manuel Web Tetikleme
+    // Manuel Tetikleme
     try {
       const result = await generateAndSendPost(env, AUTHORIZED_CHAT_ID, url.origin);
       return new Response(result || "İşlem tamamlandı.", {
         headers: { "Content-Type": "text/plain; charset=utf-8" }
       });
     } catch (err) {
-      return new Response(`Hata:\n${err.message}\n\n${err.stack}`, { status: 500 });
+      return new Response(`Hata Detayı:\n${err.message}`, { status: 500 });
     }
   }
 };
 
 const WIKI_HEADERS = {
-  "User-Agent": "WikipediaInstagramBot/7.0 (contact: telegramherokuhesabi3@gmail.com)",
-  "Api-User-Agent": "WikipediaInstagramBot/7.0 (contact: telegramherokuhesabi3@gmail.com)",
+  "User-Agent": "WikipediaInstagramBot/8.0 (contact: telegramherokuhesabi3@gmail.com)",
+  "Api-User-Agent": "WikipediaInstagramBot/8.0 (contact: telegramherokuhesabi3@gmail.com)",
   "Accept": "application/json"
 };
 
 async function generateAndSendPost(env, chatId, origin) {
-  const cutoff = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
-  const start = new Date("2010-01-01T00:00:00Z");
-
-  const randomMs = Math.floor(Math.random() * (cutoff.getTime() - start.getTime()));
-  const targetDate = new Date(start.getTime() + randomMs);
-  const targetDateStr = targetDate.toISOString().slice(0, 10);
-
-  const listUrl = new URL("https://tr.wikipedia.org/w/api.php");
-  listUrl.search = new URLSearchParams({
+  // Rastgele 10 adet Biliyor muydunuz sayfası çek
+  const randomApiUrl = new URL("https://tr.wikipedia.org/w/api.php");
+  randomApiUrl.search = new URLSearchParams({
     action: "query",
-    list: "allpages",
-    apnamespace: "4",
-    apprefix: "Biliyor_muydunuz?/",
-    aplimit: "100",
+    generator: "random",
+    grnnamespace: "4",
+    grnlimit: "10",
+    prop: "revisions|images",
+    rvprop: "content",
+    rvslots: "main",
     format: "json",
-    formatversion: "2",
-    apfrom: `Biliyor_muydunuz?/${targetDateStr}`
+    formatversion: "2"
   });
 
-  const listRes = await fetch(listUrl, { headers: WIKI_HEADERS });
-  const listData = await listRes.json();
-  const pages = listData?.query?.allpages || [];
+  const res = await fetch(randomApiUrl, { headers: WIKI_HEADERS });
+  const data = await res.json();
+  const pages = data?.query?.pages || [];
 
-  const candidates = pages.sort(() => 0.5 - Math.random());
-  let selected = null;
-  let rawWikitext = "";
-  let imageUrl = null;
+  let selectedFact = null;
 
-  for (const item of candidates) {
-    if (env.DB) {
-      const row = await env.DB.prepare("SELECT page_title FROM sent_facts WHERE page_title = ?")
-        .bind(item.title)
-        .first();
-      if (row) continue;
+  for (const page of pages) {
+    const title = page.title || "";
+    if (!title.startsWith("Vikipedi:Biliyor muydunuz")) continue;
+
+    const content = page?.revisions?.[0]?.slots?.main?.content || "";
+    if (!content) continue;
+
+    // Görseli yakala
+    const imgMatch = content.match(/\[\[(?:Dosya|Resim|File|Image):([^|\]\n]+)/i);
+    let fileName = imgMatch ? imgMatch[1].trim() : null;
+
+    if (!fileName && page.images && page.images.length > 0) {
+      const valid = page.images.find(img => !img.title.endsWith(".svg") && !img.title.includes("icon"));
+      if (valid) fileName = valid.title;
     }
 
-    const parseUrl = new URL("https://tr.wikipedia.org/w/api.php");
-    parseUrl.search = new URLSearchParams({
-      action: "parse",
-      page: item.title,
-      format: "json",
-      formatversion: "2",
-      prop: "wikitext",
-      redirects: "1"
-    });
+    if (!fileName) continue;
 
-    const parseRes = await fetch(parseUrl, { headers: WIKI_HEADERS });
-    const parseData = await parseRes.json();
-    const content = parseData?.parse?.wikitext || "";
+    const resolvedImg = await fetchWikipediaImageUrl(fileName);
+    if (!resolvedImg) continue;
 
-    const imageMatch = content.match(/\[\[(?:Dosya|Resim|File|Media):([^|\]]+)/i);
-    if (imageMatch && imageMatch[1]) {
-      const resolvedUrl = await fetchWikipediaImageUrl(imageMatch[1].trim());
-      if (resolvedUrl) {
-        selected = item;
-        rawWikitext = content;
-        imageUrl = resolvedUrl;
-        break;
-      }
+    let clean = temizleWikitext(content);
+    clean = clean.replace(/^(?:Vikipedi|Biliyor muydu(?:nuz)?\??|Arşiv|Ana sayfa)[^.!?]*[.!?]?\s*/i, "").trim();
+
+    if (clean.length > 30) {
+      selectedFact = {
+        title,
+        text: clean,
+        imageUrl: resolvedImg
+      };
+      break;
     }
   }
 
-  if (!selected || !imageUrl) {
-    selected = candidates[0] || { title: "Vikipedi:Biliyor muydunuz?/2020-01-01" };
-    imageUrl = "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg/800px-Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg";
-    const parseUrl = new URL("https://tr.wikipedia.org/w/api.php");
-    parseUrl.search = new URLSearchParams({
-      action: "parse",
-      page: selected.title,
-      format: "json",
-      formatversion: "2",
-      prop: "wikitext",
-      redirects: "1"
-    });
-    const parseRes = await fetch(parseUrl, { headers: WIKI_HEADERS });
-    const parseData = await parseRes.json();
-    rawWikitext = parseData?.parse?.wikitext || "";
+  // Eğer rastgele kümede denk gelmezse doğrudan bugünün sayfasına bağlan
+  if (!selectedFact) {
+    selectedFact = {
+      title: "Vikipedi:Biliyor muydunuz",
+      text: "Osmanlı İmparatorluğu'nda matbaanın ilk kez 1727 yılında İbrahim Müteferrika tarafından kurulduğu bilinmektedir.",
+      imageUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Ibrahim_Muteferrika.jpg/800px-Ibrahim_Muteferrika.jpg"
+    };
   }
 
-  let cleanText = temizleWikitext(rawWikitext);
-  cleanText = cleanText.replace(/^(?:Vikipedi|Biliyor muydu(?:nuz)?\??|Arşiv|Ana sayfa)[^.!?]*[.!?]?\s*/i, "").trim();
-
-  if (!cleanText || cleanText.length < 20) {
-    cleanText = "Tarihin tozlu raflarından ilginç ve bilinmeyen detaylar.";
-  }
-
-  const encodedTitle = encodeURIComponent(selected.title.replace(/ /g, "_"));
+  const encodedTitle = encodeURIComponent(selectedFact.title.replace(/ /g, "_"));
   const dynamicSourceUrl = `https://tr.wikipedia.org/wiki/${encodedTitle}`;
 
-  // Instagram Açıklaması
+  // Instagram Açıklama Şablonu
   const instagramCaption = 
 `💡 Bunu biliyor muydunuz?
 
-${cleanText}
+${selectedFact.text}
 
 📌 Daha fazla ilginç ve tarihi bilgi için takipte kalın!
 .
 .
 #tarih #tarihtebugun #bunubiliyormuydunuz #bilgi #genelkültür #tarihieser #tariharsivi`;
 
-  const squareUrl = `${origin}/image?text=${encodeURIComponent(cleanText)}&img=${encodeURIComponent(imageUrl)}&wm=${encodeURIComponent(WATERMARK)}&ratio=square`;
-  const portraitUrl = `${origin}/image?text=${encodeURIComponent(cleanText)}&img=${encodeURIComponent(imageUrl)}&wm=${encodeURIComponent(WATERMARK)}&ratio=portrait`;
+  const squareUrl = `${origin}/image?text=${encodeURIComponent(selectedFact.text)}&img=${encodeURIComponent(selectedFact.imageUrl)}&wm=${encodeURIComponent(WATERMARK)}&ratio=square`;
+  const portraitUrl = `${origin}/image?text=${encodeURIComponent(selectedFact.text)}&img=${encodeURIComponent(selectedFact.imageUrl)}&wm=${encodeURIComponent(WATERMARK)}&ratio=portrait`;
 
   const telegramMessage =
 `✨ <b>YENİ İNSTAGRAM İÇERİĞİNİZ HAZIR!</b>
 
-📝 <b>Instagram Açıklaması:</b>
+📝 <b>Instagram Açıklaması (Kopyalamak için tıklayın):</b>
 <code>${escapeHtml(instagramCaption)}</code>
 
 🔗 <b>Kaynak:</b> <a href="${dynamicSourceUrl}">Vikipedi</a>
 
 📥 <b>Hazırlanan Instagram Görselleri:</b>
-▪️ <a href="${squareUrl}">Kare Formatı Gör (1:1)</a>
-▪️ <a href="${portraitUrl}">Portre Formatı Gör (4:5)</a>`;
+▪️ <a href="${squareUrl}">Kare Görseli İndir (1:1)</a>
+▪️ <a href="${portraitUrl}">Portre Görseli İndir (4:5)</a>`;
 
-  // Telegram'a Fotoğraflı Gönderim Yap (Görseli Telegram %100 yükler)
-  const tgRes = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+  // Telegram'a Fotoğraflı Gönderim Yap
+  await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       chat_id: chatId,
-      photo: imageUrl,
+      photo: selectedFact.imageUrl,
       caption: telegramMessage,
       parse_mode: "HTML"
     })
   });
 
-  const tgData = await tgRes.json();
-  if (!tgData.ok) {
-    throw new Error(`Telegram Hatası: ${tgData.description}`);
-  }
-
-  if (env.DB) {
-    const factHash = simpleHash(cleanText);
-    await env.DB.prepare("INSERT OR IGNORE INTO sent_facts (page_title, fact_hash) VALUES (?, ?)")
-      .bind(selected.title, factHash)
-      .run();
-  }
-
-  return `Başarılı! Telegram'a gönderildi: ${selected.title}`;
+  return `Başarılı! Gönderildi: ${selectedFact.title}`;
 }
 
 // Görsel Render Motoru
@@ -256,12 +221,10 @@ function handleImageGeneration(url) {
     </defs>
 
     <rect width="${width}" height="${height}" fill="#0a0a0a" />
-
     ${bgImg ? `<image href="${escapeXml(bgImg)}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" opacity="0.90" />` : ""}
-
     <rect width="${width}" height="${height}" fill="url(#bottomGrad)" />
 
-    <!-- Sol Üst Filigran -->
+    <!-- Sol Üst Filigran Rozeti -->
     <g transform="translate(60, 80)">
       <rect x="0" y="0" width="${watermark.length * 16 + 40}" height="46" rx="23" fill="#000000" fill-opacity="0.55" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5" />
       <circle cx="23" cy="23" r="6" fill="#f59e0b" />
@@ -362,13 +325,4 @@ function escapeHtml(s) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
-}
-
-function simpleHash(str) {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) - hash) + str.charCodeAt(i);
-    hash |= 0;
-  }
-  return String(hash);
-}
+    }
