@@ -1,3 +1,7 @@
+const BOT_TOKEN = "7498614075:AAHepFlPgEvvohNwg-BWUrgAW1OrbxEUXeo";
+const MY_CHAT_ID = "1283445630";
+const WATERMARK = "@Tarihtebugun";
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -6,16 +10,15 @@ export default {
       return new Response(null, { status: 204 });
     }
 
-    // 1. Instagram SVG Görsel Motoru
+    // 1. Instagram SVG Görsel Üretim Motoru
     if (url.pathname === "/image") {
       return handleImageGeneration(url);
     }
 
     // 2. Webhook Kurulumu (/set-webhook)
     if (url.pathname === "/set-webhook") {
-      const token = env.TELEGRAM_BOT_TOKEN || "7498614075:AAHepFlPgEvvohNwg-BWUrgAW1OrbxEUXeo";
       const webhookUrl = `${url.origin}/webhook`;
-      const res = await fetch(`https://api.telegram.org/bot${token}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
+      const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
       const data = await res.json();
       return new Response(JSON.stringify(data, null, 2), {
         headers: { "Content-Type": "application/json" }
@@ -42,13 +45,12 @@ export default {
 
     // 4. Tarayıcıdan Manuel Tetikleme (Test Linki)
     try {
-      const chatId = env.TELEGRAM_CHAT_ID || "1283445630";
-      const result = await generateAndSendPost(env, chatId, url.origin);
+      const result = await generateAndSendPost(env, MY_CHAT_ID, url.origin);
       return new Response(result || "İşlem tamamlandı.", {
         headers: { "Content-Type": "text/plain; charset=utf-8" }
       });
     } catch (err) {
-      return new Response(`Hata:\n${err.message}\n\n${err.stack}`, {
+      return new Response(`Hata Detayı:\n${err.message}\n\n${err.stack}`, {
         status: 200,
         headers: { "Content-Type": "text/plain; charset=utf-8" }
       });
@@ -67,16 +69,6 @@ const AYLAR = [
 ];
 
 async function generateAndSendPost(env, chatId, origin) {
-  const token = env.TELEGRAM_BOT_TOKEN || "BURAYA_BOT_TOKENINIZ";
-  const watermark = env.CHANNEL_WATERMARK || "@Tarihtebugun";
-
-  if (!token || token.includes("BURAYA_BOT")) {
-    throw new Error("TELEGRAM_BOT_TOKEN tanımlanmadı!");
-  }
-  if (!chatId || chatId.includes("BURAYA_OZEL")) {
-    throw new Error("TELEGRAM_CHAT_ID tanımlanmadı!");
-  }
-
   // Rastgele bir Ay ve Yıl arşivi seç (2016 - 2024 arası)
   const randomYil = Math.floor(Math.random() * (2024 - 2016 + 1)) + 2016;
   const randomAy = AYLAR[Math.floor(Math.random() * AYLAR.length)];
@@ -147,8 +139,8 @@ ${selectedFact.text}
 .
 #tarih #tarihtebugun #bunubiliyormuydunuz #bilgi #genelkültür #tarihieser #tariharsivi`;
 
-  const squareUrl = `${origin}/image?text=${encodeURIComponent(selectedFact.text)}&img=${encodeURIComponent(selectedFact.imageUrl)}&wm=${encodeURIComponent(watermark)}&ratio=square`;
-  const portraitUrl = `${origin}/image?text=${encodeURIComponent(selectedFact.text)}&img=${encodeURIComponent(selectedFact.imageUrl)}&wm=${encodeURIComponent(watermark)}&ratio=portrait`;
+  const squareUrl = `${origin}/image?text=${encodeURIComponent(selectedFact.text)}&img=${encodeURIComponent(selectedFact.imageUrl)}&wm=${encodeURIComponent(WATERMARK)}&ratio=square`;
+  const portraitUrl = `${origin}/image?text=${encodeURIComponent(selectedFact.text)}&img=${encodeURIComponent(selectedFact.imageUrl)}&wm=${encodeURIComponent(WATERMARK)}&ratio=portrait`;
 
   const telegramMessage =
 `✨ <b>YENİ İNSTAGRAM İÇERİĞİNİZ HAZIR!</b>
@@ -162,7 +154,7 @@ ${selectedFact.text}
 ▪️ <a href="${squareUrl}">Kare Görseli İndir (1:1)</a>
 ▪️ <a href="${portraitUrl}">Portre Görseli İndir (4:5)</a>`;
 
-  const tgRes = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+  const tgRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
