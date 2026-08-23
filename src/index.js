@@ -62,12 +62,11 @@ export default {
 };
 
 const WIKI_HEADERS = {
-  "User-Agent": "WikipediaInstagramBot/15.0 (contact: telegramherokuhesabi3@gmail.com)",
+  "User-Agent": "WikipediaInstagramBot/16.0 (contact: telegramherokuhesabi3@gmail.com)",
   "Accept": "application/json"
 };
 
 async function generateAndSendPost(env, chatId, origin) {
-  // 1. Wikipedia'daki GERÇEK "Biliyor muydunuz" sayfalarını toplu çek (500 adet)
   const listUrl = new URL("https://tr.wikipedia.org/w/api.php");
   listUrl.search = new URLSearchParams({
     action: "query",
@@ -83,7 +82,6 @@ async function generateAndSendPost(env, chatId, origin) {
   const listData = await listRes.json();
   const allPages = listData?.query?.allpages || [];
 
-  // Ana sayfaları ve yönlendirmeleri filtrele
   const validPages = allPages.filter(p => 
     p.title && 
     p.title !== "Vikipedi:Biliyor muydunuz" && 
@@ -94,7 +92,6 @@ async function generateAndSendPost(env, chatId, origin) {
   const shuffledPages = validPages.sort(() => 0.5 - Math.random());
   let selectedFact = null;
 
-  // Sayfaları gez ve ilk görselli gerçek maddeyi bul
   for (const page of shuffledPages) {
     const parseUrl = new URL("https://tr.wikipedia.org/w/api.php");
     parseUrl.search = new URLSearchParams({
@@ -112,7 +109,6 @@ async function generateAndSendPost(env, chatId, origin) {
 
     if (!wikitext) continue;
 
-    // Görsel dosyasını ara
     const imgMatch = wikitext.match(/\[\[(?:Dosya|Resim|File|Media|Image):([^|\]\n]+)/i);
     if (imgMatch && imgMatch[1]) {
       const fileName = imgMatch[1].trim();
@@ -121,7 +117,6 @@ async function generateAndSendPost(env, chatId, origin) {
         let cleanText = temizleWikitext(wikitext);
         cleanText = cleanText.replace(/^(?:Vikipedi|Biliyor muydu(?:nuz)?\??|Arşiv|Ana sayfa)[^.!?]*[.!?]?\s*/i, "").trim();
 
-        // Birden fazla madde varsa ilk geçerli cümleyi al
         if (cleanText.includes("...")) {
           const parts = cleanText.split("...");
           const found = parts.find(p => p.trim().length > 30);
@@ -144,7 +139,6 @@ async function generateAndSendPost(env, chatId, origin) {
     }
   }
 
-  // Havuzda denk gelmezse bile boş dönmeyen garantili içerik
   if (!selectedFact) {
     selectedFact = {
       title: "Vikipedi:Biliyor muydunuz",
@@ -156,7 +150,6 @@ async function generateAndSendPost(env, chatId, origin) {
   const encodedTitle = encodeURIComponent(selectedFact.title.replace(/ /g, "_"));
   const dynamicSourceUrl = `https://tr.wikipedia.org/wiki/${encodedTitle}`;
 
-  // Instagram Açıklama Taslağı
   const instagramCaption = 
 `💡 Bunu biliyor muydunuz?
 
@@ -189,7 +182,6 @@ ${selectedFact.text}
     ]
   };
 
-  // Telegram'a Fotoğraflı Gönderim
   let sent = false;
   try {
     const tgRes = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
@@ -226,7 +218,7 @@ ${selectedFact.text}
   return `Başarılı! Gönderildi: ${selectedFact.title}`;
 }
 
-// Görsel SVG Render Motoru (Bebas Neue, Sol Üst IG Rozeti, Geniş Alan)
+// Görsel SVG Render Motoru (Genişletilmiş ve Aşağı Konumlandırılmış Tasarım)
 function handleImageGeneration(url) {
   const text = url.searchParams.get("text") || "Bunu biliyor muydunuz?";
   const bgImg = url.searchParams.get("img") || "";
@@ -236,8 +228,8 @@ function handleImageGeneration(url) {
   const width = 1080;
   const height = ratio === "portrait" ? 1350 : 1080;
 
-  // Geniş satır yapısı (Daha az satır kaplar)
-  const maxLineChars = ratio === "portrait" ? 42 : 46;
+  // Geniş satır sınırları (Soldan sağa daha geniş yayılım, az satır sayısı)
+  const maxLineChars = ratio === "portrait" ? 54 : 58;
   const words = text.split(" ");
   const lines = [];
   let cur = "";
@@ -252,12 +244,13 @@ function handleImageGeneration(url) {
   }
   if (cur) lines.push(cur.trim());
 
-  const lineHeight = 46;
+  const lineHeight = 42;
   const totalTextHeight = lines.length * lineHeight;
   
-  const bottomMargin = ratio === "portrait" ? 140 : 110;
+  // Metni ve rozeti aşağıda konumlandırma
+  const bottomMargin = ratio === "portrait" ? 85 : 65;
   const startY = height - bottomMargin - totalTextHeight;
-  const badgeY = startY - 60;
+  const badgeY = startY - 45;
 
   const tspanLines = lines
     .map((line, idx) => `<tspan x="540" y="${startY + idx * lineHeight}">${escapeXml(line)}</tspan>`)
@@ -270,20 +263,20 @@ function handleImageGeneration(url) {
         @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&amp;display=swap');
         .main-text {
           font-family: 'Bebas Neue', 'Impact', sans-serif;
-          font-size: 34px;
-          letter-spacing: 1.5px;
+          font-size: 31px;
+          letter-spacing: 1.2px;
           word-spacing: 2px;
           fill: #ffffff;
         }
         .badge-text {
           font-family: 'Bebas Neue', 'Impact', sans-serif;
-          font-size: 24px;
+          font-size: 22px;
           letter-spacing: 2px;
           fill: #000000;
         }
         .watermark-text {
           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-          font-size: 20px;
+          font-size: 19px;
           font-weight: 700;
           letter-spacing: 0.5px;
           fill: #ffffff;
@@ -291,10 +284,10 @@ function handleImageGeneration(url) {
       </style>
 
       <linearGradient id="bottomGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-        <stop offset="0%" stop-color="#000000" stop-opacity="0.05" />
-        <stop offset="35%" stop-color="#000000" stop-opacity="0.30" />
-        <stop offset="65%" stop-color="#000000" stop-opacity="0.82" />
-        <stop offset="100%" stop-color="#000000" stop-opacity="0.96" />
+        <stop offset="0%" stop-color="#000000" stop-opacity="0.02" />
+        <stop offset="40%" stop-color="#000000" stop-opacity="0.35" />
+        <stop offset="70%" stop-color="#000000" stop-opacity="0.88" />
+        <stop offset="100%" stop-color="#000000" stop-opacity="0.97" />
       </linearGradient>
 
       <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
@@ -307,28 +300,28 @@ function handleImageGeneration(url) {
     <rect width="${width}" height="${height}" fill="url(#bottomGrad)" />
 
     <!-- Sol Üst Rozet: Instagram İkonu + @Buguntarihte -->
-    <g transform="translate(60, 75)">
-      <rect x="0" y="0" width="${watermark.length * 15 + 65}" height="48" rx="24" fill="#000000" fill-opacity="0.60" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5" />
+    <g transform="translate(50, 65)">
+      <rect x="0" y="0" width="${watermark.length * 14 + 60}" height="44" rx="22" fill="#000000" fill-opacity="0.60" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5" />
       
       <!-- Instagram SVG Logosu -->
-      <g transform="translate(14, 12) scale(0.048)">
+      <g transform="translate(13, 11) scale(0.044)">
         <path fill="#f59e0b" d="M224.1 141c-63.6 0-114.9 51.3-114.9 114.9s51.3 114.9 114.9 114.9S339 319.5 339 255.9 287.7 141 224.1 141zm0 189.6c-41.1 0-74.7-33.5-74.7-74.7s33.5-74.7 74.7-74.7 74.7 33.5 74.7 74.7-33.6 74.7-74.7 74.7zm146.4-194.3c0 14.9-12 26.8-26.8 26.8-14.9 0-26.8-12-26.8-26.8s12-26.8 26.8-26.8 26.8 12 26.8 26.8zm76.1 27.2c-1.7-35.9-9.9-67.7-36.2-93.9-26.2-26.2-58-34.4-93.9-36.2-37-2.1-147.9-2.1-184.9 0-35.8 1.7-67.6 9.9-93.9 36.1s-34.4 58-36.2 93.9c-2.1 37-2.1 147.9 0 184.9 1.7 35.9 9.9 67.7 36.2 93.9s58 34.4 93.9 36.2c37 2.1 147.9 2.1 184.9 0 35.9-1.7 67.7-9.9 93.9-36.2 26.2-26.2 34.4-58 36.2-93.9 2.1-37 2.1-147.8 0-184.8zM398.8 388c-7.8 19.6-22.9 34.7-42.6 42.6-29.5 11.7-99.5 9-132.1 9s-102.7 2.6-132.1-9c-19.6-7.8-34.7-22.9-42.6-42.6-11.7-29.5-9-99.5-9-132.1s-2.6-102.7 9-132.1c7.8-19.6 22.9-34.7 42.6-42.6 29.5-11.7 99.5-9 132.1-9s102.7-2.6 132.1 9c19.6 7.8 34.7 22.9 42.6 42.6 11.7 29.5 9 99.5 9 132.1s2.7 102.7-9 132.1z"/>
       </g>
 
-      <text x="46" y="30" class="watermark-text">
+      <text x="44" y="28" class="watermark-text">
         ${escapeXml(watermark)}
       </text>
     </g>
 
-    <!-- BİLİYOR MUYDUNUZ? Rozeti -->
+    <!-- BİLİYOR MUYDUNUZ? Rozeti (Aşağı Konumlandırılmış) -->
     <g transform="translate(540, ${badgeY})">
-      <rect x="-150" y="-26" width="300" height="52" rx="26" fill="#f59e0b" filter="url(#softShadow)" />
-      <text text-anchor="middle" y="8" class="badge-text">
+      <rect x="-140" y="-23" width="280" height="46" rx="23" fill="#f59e0b" filter="url(#softShadow)" />
+      <text text-anchor="middle" y="7" class="badge-text">
         BİLİYOR MUYDUNUZ?
       </text>
     </g>
 
-    <!-- Bilgi Metni (Bebas Neue Fontu) -->
+    <!-- Bilgi Metni (Soldan Sağa Genişletilmiş & Bebas Neue) -->
     <text text-anchor="middle" class="main-text" filter="url(#softShadow)">
       ${tspanLines}
     </text>
@@ -352,7 +345,6 @@ function escapeXml(s) {
     .replace(/'/g, "&apos;");
 }
 
-// Tüm Görsel Formatlarını (SVG, TIF, PNG, JPG vb.) Yüksek Kalitede Çözen Fonksiyon
 async function fetchWikipediaImageUrl(fileName) {
   try {
     let cleanName = fileName.replace(/^(?:Dosya|Resim|File|Media|Image):/i, "").trim();
@@ -387,12 +379,13 @@ function temizleWikitext(s) {
     .replace(/<[^>]+>/g, " ")
     .replace(/\{\{[^{}]*\}\}/g, " ")
     .replace(/\[\[(?:Dosya|Resim|File|Media|Image):[^\]]+\]\]/gi, " ")
+    .replace(/^.*?betimleyen bir resim\.\s*\]*\]*\s*/i, "")
     .replace(/\[\[([^|\]]+)\|([^\]]+)\]\]/g, "$2")
     .replace(/\[\[([^\]]+)\]\]/g, "$1")
     .replace(/\[https?:\/\/[^\s\]]+\s+([^\]]+)\]/g, "$1")
     .replace(/'{2,3}/g, "")
     .replace(/\b\d{2,4}x\d{2,4}px\b/gi, " ")
-    .replace(/^[;*.]+\s*/, "")
+    .replace(/^[;*.'"\s\]]+/, "")
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
     .replace(/&quot;/gi, '"')
