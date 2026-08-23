@@ -10,7 +10,7 @@ export default {
       return new Response(null, { status: 204 });
     }
 
-    // 1. Instagram SVG Görsel Üretim Motoru
+    // 1. Instagram SVG Görsel Oluşturma
     if (url.pathname === "/image") {
       return handleImageGeneration(url);
     }
@@ -59,7 +59,7 @@ export default {
 };
 
 const WIKI_HEADERS = {
-  "User-Agent": "WikipediaInstagramBot/11.0 (contact: telegramherokuhesabi3@gmail.com)",
+  "User-Agent": "WikipediaInstagramBot/1.0 (contact: telegramherokuhesabi3@gmail.com)",
   "Accept": "application/json"
 };
 
@@ -69,6 +69,7 @@ const AYLAR = [
 ];
 
 async function generateAndSendPost(env, chatId, origin) {
+  // Rastgele bir Ay ve Yıl arşivi seç
   const randomYil = Math.floor(Math.random() * (2024 - 2016 + 1)) + 2016;
   const randomAy = AYLAR[Math.floor(Math.random() * AYLAR.length)];
   const pageTitle = `Vikipedi:Biliyor muydunuz/${randomAy} ${randomYil}`;
@@ -117,6 +118,7 @@ async function generateAndSendPost(env, chatId, origin) {
     console.error("Wikipedia ayrıştırma hatası:", e);
   }
 
+  // Yedek içerik
   if (!selectedFact) {
     selectedFact = {
       title: "Vikipedi:Biliyor muydunuz",
@@ -128,6 +130,7 @@ async function generateAndSendPost(env, chatId, origin) {
   const encodedTitle = encodeURIComponent(selectedFact.title.replace(/ /g, "_"));
   const dynamicSourceUrl = `https://tr.wikipedia.org/wiki/${encodedTitle}`;
 
+  // Instagram Açıklama Formatı
   const instagramCaption = 
 `💡 Bunu biliyor muydunuz?
 
@@ -138,9 +141,6 @@ ${selectedFact.text}
 .
 #tarih #tarihtebugun #bunubiliyormuydunuz #bilgi #genelkültür #tarihieser #tariharsivi`;
 
-  const squareUrl = `${origin}/image?text=${encodeURIComponent(selectedFact.text)}&img=${encodeURIComponent(selectedFact.imageUrl)}&wm=${encodeURIComponent(WATERMARK)}&ratio=square`;
-  const portraitUrl = `${origin}/image?text=${encodeURIComponent(selectedFact.text)}&img=${encodeURIComponent(selectedFact.imageUrl)}&wm=${encodeURIComponent(WATERMARK)}&ratio=portrait`;
-
   const telegramMessage =
 `✨ <b>YENİ İNSTAGRAM İÇERİĞİNİZ HAZIR!</b>
 
@@ -149,34 +149,41 @@ ${selectedFact.text}
 
 🔗 <b>Kaynak:</b> <a href="${dynamicSourceUrl}">Vikipedi</a>
 
-📥 <b>Hazırlanan Instagram Görselleri:</b>
-▪️ <a href="${squareUrl}">Kare Görseli İndir (1:1)</a>
-▪️ <a href="${portraitUrl}">Portre Görseli İndir (4:5)</a>`;
+👇 <i>Aşağıdaki butonlardan formatı seçip görseli indirebilirsiniz:</i>`;
 
-  // Görseli doğrudan Worker üzerinden çekip Telegram'a binary formData olarak yükle
+  const squareParams = new URLSearchParams({ text: selectedFact.text, img: selectedFact.imageUrl, wm: WATERMARK, ratio: "square" });
+  const portraitParams = new URLSearchParams({ text: selectedFact.text, img: selectedFact.imageUrl, wm: WATERMARK, ratio: "portrait" });
+
+  const replyMarkup = {
+    inline_keyboard: [
+      [
+        { text: "📥 Instagram Kare (1:1)", url: `${origin}/image?${squareParams.toString()}` },
+        { text: "📥 Instagram Portre (4:5)", url: `${origin}/image?${portraitParams.toString()}` }
+      ]
+    ]
+  };
+
+  // Telegram'a Fotoğraflı ve Butonlu Gönderim
   let sent = false;
   try {
-    const imgFetch = await fetch(selectedFact.imageUrl, { headers: WIKI_HEADERS });
-    if (imgFetch.ok) {
-      const blob = await imgFetch.blob();
-      const formData = new FormData();
-      formData.append("chat_id", chatId);
-      formData.append("photo", blob, "image.jpg");
-      formData.append("caption", telegramMessage);
-      formData.append("parse_mode", "HTML");
-
-      const tgRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
-        method: "POST",
-        body: formData
-      });
-      const tgData = await tgRes.json();
-      if (tgData.ok) sent = true;
-    }
-  } catch (err) {
-    console.error("Görsel yükleme hatası:", err);
+    const tgRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        photo: selectedFact.imageUrl,
+        caption: telegramMessage,
+        parse_mode: "HTML",
+        reply_markup: replyMarkup
+      })
+    });
+    const tgData = await tgRes.json();
+    if (tgData.ok) sent = true;
+  } catch (e) {
+    console.error("Fotoğraf gönderim hatası:", e);
   }
 
-  // Eğer fotoğraf yüklenemezse doğrudan metin mesajı olarak ilet
+  // Fotoğraf yüklenemezse metin + butonlar ile gönder
   if (!sent) {
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: "POST",
@@ -185,6 +192,7 @@ ${selectedFact.text}
         chat_id: chatId,
         text: telegramMessage,
         parse_mode: "HTML",
+        reply_markup: replyMarkup,
         disable_web_page_preview: false
       })
     });
@@ -193,6 +201,7 @@ ${selectedFact.text}
   return `Başarılı! Telegram'a gönderildi (${selectedFact.title})`;
 }
 
+// Görsel Render Motoru (SVG Tasarımı)
 function handleImageGeneration(url) {
   const text = url.searchParams.get("text") || "Bunu biliyor muydunuz?";
   const bgImg = url.searchParams.get("img") || "";
