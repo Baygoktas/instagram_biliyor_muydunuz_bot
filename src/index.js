@@ -8,17 +8,12 @@ export default {
 
     if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
 
-    // 1. İndirilebilir HTML / Görsel Önizleme Sayfası
+    // 1. Doğrudan PNG Üreten ve İndiren Sayfa
     if (url.pathname === "/view") {
-      return handleViewPage(url);
+      return handleCanvasView(url);
     }
 
-    // 2. Ham SVG Motoru
-    if (url.pathname === "/image") {
-      return handleImageGeneration(url);
-    }
-
-    // 3. Webhook Kurulumu (/set-webhook)
+    // 2. Webhook Kurulumu (/set-webhook)
     if (url.pathname === "/set-webhook") {
       const webhookUrl = `${url.origin}/webhook`;
       const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
@@ -28,7 +23,7 @@ export default {
       });
     }
 
-    // 4. Telegram Webhook Gelen Komutlar (/hazirla)
+    // 3. Telegram Webhook Gelen Komutlar (/hazirla)
     if (url.pathname === "/webhook" && request.method === "POST") {
       try {
         const update = await request.json();
@@ -46,7 +41,7 @@ export default {
       return new Response("OK", { status: 200 });
     }
 
-    // 5. Tarayıcıdan Manuel Tetikleme (Test Linki)
+    // 4. Tarayıcıdan Manuel Tetikleme (Test Linki)
     try {
       const webhookUrl = `${url.origin}/webhook`;
       await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
@@ -65,12 +60,11 @@ export default {
 };
 
 const WIKI_HEADERS = {
-  "User-Agent": "WikipediaInstagramBot/2.0 (contact: telegramherokuhesabi3@gmail.com)",
+  "User-Agent": "WikipediaInstagramBot/3.0 (contact: telegramherokuhesabi3@gmail.com)",
   "Accept": "application/json"
 };
 
 async function generateAndSendPost(env, chatId, origin) {
-  // D1 tablosu yoksa otomatik oluştur
   if (env.DB) {
     try {
       await env.DB.prepare(`
@@ -81,9 +75,7 @@ async function generateAndSendPost(env, chatId, origin) {
           sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `).run();
-    } catch (e) {
-      console.error("D1 tablo oluşturma hatası:", e);
-    }
+    } catch (e) {}
   }
 
   const listUrl = new URL("https://tr.wikipedia.org/w/api.php");
@@ -112,7 +104,6 @@ async function generateAndSendPost(env, chatId, origin) {
   let selectedFact = null;
 
   for (const page of shuffledPages) {
-    // 1. D1 kontrolü: Sayfa başlığı daha önce kullanıldı mı?
     if (env.DB) {
       try {
         const row = await env.DB.prepare("SELECT page_title FROM sent_facts WHERE page_title = ?")
@@ -159,7 +150,6 @@ async function generateAndSendPost(env, chatId, origin) {
         ) {
           const factHash = simpleHash(cleanText);
 
-          // 2. D1 kontrolü: Metin özeti daha önce kullanıldı mı?
           if (env.DB) {
             try {
               const rowHash = await env.DB.prepare("SELECT fact_hash FROM sent_facts WHERE fact_hash = ?")
@@ -211,7 +201,7 @@ ${selectedFact.text}
 
 🔗 <b>Kaynak:</b> <a href="${dynamicSourceUrl}">Vikipedi</a>
 
-👇 <i>Aşağıdaki butonlardan formatı seçip görseli cihazınıza kaydedin:</i>`;
+👇 <i>Aşağıdaki butonlardan formatı seçip görseli doğrudan galerinize indirin:</i>`;
 
   const squareParams = new URLSearchParams({ text: selectedFact.text, img: selectedFact.imageUrl, ratio: "square" });
   const portraitParams = new URLSearchParams({ text: selectedFact.text, img: selectedFact.imageUrl, ratio: "portrait" });
@@ -240,9 +230,7 @@ ${selectedFact.text}
     });
     const tgData = await tgRes.json();
     if (tgData.ok) sent = true;
-  } catch (e) {
-    console.error(e);
-  }
+  } catch (e) {}
 
   if (!sent) {
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
@@ -258,100 +246,19 @@ ${selectedFact.text}
     });
   }
 
-  // 3. D1 Kayıt: Gönderilen içeriği veritabanına işle
   if (env.DB) {
     try {
       await env.DB.prepare("INSERT OR IGNORE INTO sent_facts (page_title, fact_hash) VALUES (?, ?)")
         .bind(selectedFact.title, selectedFact.hash)
         .run();
-    } catch (e) {
-      console.error("D1 kayıt hatası:", e);
-    }
+    } catch (e) {}
   }
 
   return `Gönderildi: ${selectedFact.title}`;
 }
 
-async function handleViewPage(url) {
-  const svgUrl = `/image?${url.searchParams.toString()}`;
-  const ratio = url.searchParams.get("ratio") || "square";
-
-  const html = `<!DOCTYPE html>
-<html lang="tr">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Instagram Gönderi İndir</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-    body { background: #0f172a; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
-    .container { max-width: 500px; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 18px; }
-    .preview-box { width: 100%; border-radius: 14px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.6); background: #000; }
-    .preview-box img { width: 100%; height: auto; display: block; }
-    .btn { width: 100%; padding: 16px; font-size: 17px; font-weight: 700; color: #000; background: #f59e0b; border: none; border-radius: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; text-decoration: none; box-shadow: 0 4px 14px rgba(245, 158, 11, 0.4); }
-    .btn:active { transform: scale(0.98); }
-    .tip { font-size: 13px; color: #94a3b8; text-align: center; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="preview-box">
-      <img id="postImg" src="${svgUrl}" alt="Instagram Post">
-    </div>
-    <button class="btn" id="downloadBtn" onclick="downloadAsPng()">
-      📥 Görseli Galeriye İndir (PNG)
-    </button>
-    <p class="tip">Butona tıklayarak yazılı ve tasarımlı halini tam çözünürlükte kaydedebilirsiniz.</p>
-  </div>
-
-  <script>
-    async function downloadAsPng() {
-      const btn = document.getElementById('downloadBtn');
-      btn.innerText = '⏳ Hazırlanıyor...';
-      try {
-        const res = await fetch('${svgUrl}');
-        const svgText = await res.text();
-        
-        const width = 1080;
-        const height = '${ratio}' === 'portrait' ? 1350 : 1080;
-        
-        const img = new Image();
-        const svgBlob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
-        const blobUrl = URL.createObjectURL(svgBlob);
-        
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, width, height);
-          URL.revokeObjectURL(blobUrl);
-          
-          const pngUrl = canvas.toDataURL('image/png');
-          const a = document.createElement('a');
-          a.download = 'instagram_post.png';
-          a.href = pngUrl;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          btn.innerText = '✅ İndirildi!';
-          setTimeout(() => { btn.innerText = '📥 Görseli Galeriye İndir (PNG)'; }, 2000);
-        };
-        img.src = blobUrl;
-      } catch (err) {
-        btn.innerText = '❌ Hata Oluştu';
-      }
-    }
-  </script>
-</body>
-</html>`;
-
-  return new Response(html, {
-    headers: { "Content-Type": "text/html; charset=utf-8" }
-  });
-}
-
-async function handleImageGeneration(url) {
+// Güvenli HTML5 Canvas Render Sayfası
+function handleCanvasView(url) {
   const text = url.searchParams.get("text") || "Tarihin tozlu raflarında kalmış ilginç ve bilinmeyen detaylar.";
   const bgImg = url.searchParams.get("img") || "";
   const ratio = url.searchParams.get("ratio") || "square";
@@ -359,141 +266,223 @@ async function handleImageGeneration(url) {
   const width = 1080;
   const height = ratio === "portrait" ? 1350 : 1080;
 
-  let embeddedImgData = bgImg;
-  if (bgImg && bgImg.startsWith("http")) {
-    try {
-      const imgRes = await fetch(bgImg, { headers: WIKI_HEADERS });
-      if (imgRes.ok) {
-        const buffer = await imgRes.arrayBuffer();
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
-        const contentType = imgRes.headers.get("content-type") || "image/jpeg";
-        embeddedImgData = `data:${contentType};base64,${base64}`;
+  const html = `<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Görseli İndir</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', -apple-system, sans-serif; }
+    body { background: #0b0f19; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 16px; }
+    .wrap { max-width: 480px; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+    .canvas-box { width: 100%; border-radius: 12px; overflow: hidden; box-shadow: 0 12px 36px rgba(0,0,0,0.8); background: #000; }
+    canvas { width: 100%; height: auto; display: block; }
+    .btn { width: 100%; padding: 16px; font-size: 16px; font-weight: 700; color: #000; background: #f59e0b; border: none; border-radius: 10px; cursor: pointer; display: block; text-align: center; text-decoration: none; box-shadow: 0 4px 16px rgba(245, 158, 11, 0.4); }
+    .btn:active { transform: scale(0.98); }
+    .tip { font-size: 12px; color: #94a3b8; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="canvas-box">
+      <canvas id="c" width="${width}" height="${height}"></canvas>
+    </div>
+    <a class="btn" id="dl" href="#" download="instagram_post.png">📥 Galeriye Kaydet (PNG)</a>
+    <p class="tip">Görselin üzerine basılı tutarak da cihazınıza kaydedebilirsiniz.</p>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    const dlBtn = document.getElementById('dl');
+
+    const width = ${width};
+    const height = ${height};
+    const text = ${JSON.stringify(text.toLocaleUpperCase("tr-TR"))};
+    const watermark = ${JSON.stringify(WATERMARK)};
+    const bgUrl = ${JSON.stringify(bgImg)};
+
+    async function draw() {
+      // 1. Siyah Zemin
+      ctx.fillStyle = '#0a0a0a';
+      ctx.fillRect(0, 0, width, height);
+
+      // 2. Arka Plan Resmi
+      if (bgUrl) {
+        try {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = resolve; // Hata alsa da akışı kesmez
+            img.src = bgUrl;
+          });
+          if (img.width) {
+            const hRatio = width / img.width;
+            const vRatio = height / img.height;
+            const ratio = Math.max(hRatio, vRatio);
+            const centerShiftX = (width - img.width * ratio) / 2;
+            const centerShiftY = (height - img.height * ratio) / 2;
+            ctx.globalAlpha = 0.95;
+            ctx.drawImage(img, 0, 0, img.width, img.height, centerShiftX, centerShiftY, img.width * ratio, img.height * ratio);
+            ctx.globalAlpha = 1.0;
+          }
+        } catch(e){}
       }
-    } catch (e) {
-      embeddedImgData = bgImg;
-    }
-  }
 
-  const maxLineChars = ratio === "portrait" ? 44 : 48;
-  const words = text.toLocaleUpperCase("tr-TR").split(" ");
-  const lines = [];
-  let cur = "";
+      // 3. Yazı Alanı Degrade Karartması
+      const grad = ctx.createLinearGradient(0, height * 0.35, 0, height);
+      grad.addColorStop(0, 'rgba(0,0,0,0)');
+      grad.addColorStop(0.4, 'rgba(0,0,0,0.3)');
+      grad.addColorStop(0.7, 'rgba(0,0,0,0.85)');
+      grad.addColorStop(0.95, 'rgba(0,0,0,0.98)');
+      grad.addColorStop(1, 'rgba(0,0,0,1)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, width, height);
 
-  for (const w of words) {
-    if ((cur + " " + w).trim().length > maxLineChars) {
+      // 4. Sol Üst Rozet (@biliyormuydunuz)
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3;
+      // Instagram çerçeve
+      roundRect(ctx, 60, 60, 44, 44, 12);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(82, 82, 10, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(92, 72, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Rozet Metni
+      ctx.font = '700 22px Inter, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(watermark, 116, 89);
+
+      // 5. Metin Satırlama
+      ctx.font = '34px "Bebas Neue", Impact, sans-serif';
+      const words = text.split(' ');
+      const lines = [];
+      let cur = '';
+      const maxChars = ${ratio === "portrait" ? 44 : 48};
+
+      for (const w of words) {
+        if ((cur + ' ' + w).trim().length > maxChars) {
+          if (cur) lines.push(cur.trim());
+          cur = w;
+        } else {
+          cur += ' ' + w;
+        }
+      }
       if (cur) lines.push(cur.trim());
-      cur = w;
-    } else {
-      cur += " " + w;
+
+      const lineHeight = 46;
+      const totalH = lines.length * lineHeight;
+      const bottomM = ${ratio === "portrait" ? 140 : 110};
+      const startY = height - bottomM - totalH;
+      const titleY = startY - 70;
+
+      // 6. Başlık (BİLİYOR MUYDUNUZ?)
+      ctx.font = '56px "Bebas Neue", Impact, sans-serif';
+      ctx.fillStyle = '#f59e0b';
+      ctx.textAlign = 'center';
+      ctx.fillText('BİLİYOR MUYDUNUZ?', width / 2, titleY);
+
+      // Sarı Çizgi
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 3.5;
+      ctx.beginPath();
+      ctx.moveTo(width / 2 - 50, titleY + 20);
+      ctx.lineTo(width / 2 + 50, titleY + 20);
+      ctx.stroke();
+
+      // 7. Gövde Metni
+      ctx.font = '34px "Bebas Neue", Impact, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.shadowColor = 'rgba(0,0,0,0.9)';
+      ctx.shadowBlur = 8;
+      lines.forEach((l, i) => {
+        ctx.fillText(l, width / 2, startY + i * lineHeight);
+      });
+      ctx.shadowBlur = 0;
+
+      // 8. Alt İkonlar
+      drawIcons(ctx, width, height);
+
+      // İndirme Butonunu Bağla
+      try {
+        dlBtn.href = canvas.toDataURL('image/png');
+      } catch(e){}
     }
-  }
-  if (cur) lines.push(cur.trim());
 
-  const lineHeight = 46;
-  const totalTextHeight = lines.length * lineHeight;
-  
-  const bottomMargin = ratio === "portrait" ? 140 : 110;
-  const startY = height - bottomMargin - totalTextHeight;
-  const titleY = startY - 70;
-  const lineY = titleY + 25;
-
-  const tspanLines = lines
-    .map((line, idx) => `<tspan x="540" y="${startY + idx * lineHeight}">${escapeXml(line)}</tspan>`)
-    .join("");
-
-  const svg = `
-  <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-    <defs>
-      <style>
-        @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&amp;family=Inter:wght@500;700&amp;display=swap');
-        
-        .header-title {
-          font-family: 'Bebas Neue', 'Impact', sans-serif;
-          font-size: 56px;
-          letter-spacing: 3px;
-          fill: #f59e0b;
-        }
-        .main-text {
-          font-family: 'Bebas Neue', 'Impact', sans-serif;
-          font-size: 34px;
-          letter-spacing: 1.6px;
-          word-spacing: 2px;
-          fill: #ffffff;
-        }
-        .watermark-text {
-          font-family: 'Inter', sans-serif;
-          font-size: 22px;
-          font-weight: 700;
-          letter-spacing: 0.5px;
-          fill: #ffffff;
-        }
-      </style>
-
-      <linearGradient id="textOnlyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-        <stop offset="0%" stop-color="#000000" stop-opacity="0" />
-        <stop offset="48%" stop-color="#000000" stop-opacity="0.25" />
-        <stop offset="70%" stop-color="#000000" stop-opacity="0.85" />
-        <stop offset="90%" stop-color="#000000" stop-opacity="0.98" />
-        <stop offset="100%" stop-color="#000000" stop-opacity="1" />
-      </linearGradient>
-
-      <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
-        <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#000000" flood-opacity="0.9"/>
-      </filter>
-    </defs>
-
-    <rect width="${width}" height="${height}" fill="#0a0a0a" />
-    ${embeddedImgData ? `<image href="${embeddedImgData}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" opacity="0.95" />` : ""}
-    
-    <rect width="${width}" height="${height}" fill="url(#textOnlyGrad)" />
-
-    <!-- Sol Üst: Instagram Rozeti -->
-    <g transform="translate(60, 65)">
-      <rect x="0" y="0" width="44" height="44" rx="12" fill="none" stroke="#ffffff" stroke-width="3" />
-      <circle cx="22" cy="22" r="10" fill="none" stroke="#ffffff" stroke-width="3" />
-      <circle cx="32" cy="12" r="2.5" fill="#ffffff" />
-      <text x="56" y="30" class="watermark-text" filter="url(#softShadow)">
-        ${escapeXml(WATERMARK)}
-      </text>
-    </g>
-
-    <!-- BİLİYOR MUYDUNUZ? Başlığı -->
-    <text x="540" y="${titleY}" text-anchor="middle" class="header-title" filter="url(#softShadow)">
-      BİLİYOR MUYDUNUZ?
-    </text>
-
-    <!-- Ayırıcı Çizgi -->
-    <line x1="490" y1="${lineY}" x2="590" y2="${lineY}" stroke="#f59e0b" stroke-width="3.5" stroke-linecap="round" />
-
-    <!-- Gövde Metni -->
-    <text text-anchor="middle" class="main-text" filter="url(#softShadow)">
-      ${tspanLines}
-    </text>
-
-    <!-- Alt Kısım: İkonlar -->
-    <g transform="translate(340, ${height - 65})">
-      <g stroke="#ffffff" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="translate(0, 0) scale(1.1)">
-        <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
-      </g>
-      <g stroke="#ffffff" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="translate(120, 0) scale(1.1)">
-        <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-      </g>
-      <g stroke="#ffffff" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="translate(240, 0) scale(1.1)">
-        <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
-      </g>
-      <g stroke="#ffffff" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="translate(360, 0) scale(1.1)">
-        <line x1="22" y1="2" x2="11" y2="13"/>
-        <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-      </g>
-    </g>
-  </svg>
-  `;
-
-  return new Response(svg, {
-    headers: {
-      "Content-Type": "image/svg+xml; charset=utf-8",
-      "Cache-Control": "public, max-age=86400"
+    function roundRect(ctx, x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
     }
+
+    function drawIcons(ctx, w, h) {
+      const baseY = h - 60;
+      const startX = w / 2 - 180;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      // 1. Kaydet
+      ctx.beginPath();
+      ctx.moveTo(startX, baseY);
+      ctx.lineTo(startX + 18, baseY);
+      ctx.lineTo(startX + 18, baseY + 24);
+      ctx.lineTo(startX + 9, baseY + 18);
+      ctx.lineTo(startX, baseY + 24);
+      ctx.closePath();
+      ctx.stroke();
+
+      // 2. Kalp
+      const kX = startX + 110;
+      ctx.beginPath();
+      ctx.arc(kX + 6, baseY + 6, 6, Math.PI, 0, false);
+      ctx.arc(kX + 16, baseY + 6, 6, Math.PI, 0, false);
+      ctx.lineTo(kX + 11, baseY + 22);
+      ctx.closePath();
+      ctx.stroke();
+
+      // 3. Yorum
+      const yX = startX + 220;
+      roundRect(ctx, yX, baseY, 22, 16, 5);
+      ctx.stroke();
+
+      // 4. Paylaş (Uçak)
+      const pX = startX + 330;
+      ctx.beginPath();
+      ctx.moveTo(pX + 22, baseY);
+      ctx.lineTo(pX, baseY + 10);
+      ctx.lineTo(pX + 8, baseY + 13);
+      ctx.lineTo(pX + 22, baseY);
+      ctx.stroke();
+    }
+
+    // Fontlar yüklenince çizimi başlat
+    document.fonts.ready.then(draw);
+  </script>
+</body>
+</html>`;
+
+  return new Response(html, {
+    headers: { "Content-Type": "text/html; charset=utf-8" }
   });
 }
 
