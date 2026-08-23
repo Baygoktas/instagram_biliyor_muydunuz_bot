@@ -65,11 +65,27 @@ export default {
 };
 
 const WIKI_HEADERS = {
-  "User-Agent": "WikipediaInstagramBot/1.0 (contact: telegramherokuhesabi3@gmail.com)",
+  "User-Agent": "WikipediaInstagramBot/2.0 (contact: telegramherokuhesabi3@gmail.com)",
   "Accept": "application/json"
 };
 
 async function generateAndSendPost(env, chatId, origin) {
+  // D1 tablosu yoksa otomatik oluştur
+  if (env.DB) {
+    try {
+      await env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS sent_facts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          page_title TEXT UNIQUE,
+          fact_hash TEXT UNIQUE,
+          sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `).run();
+    } catch (e) {
+      console.error("D1 tablo oluşturma hatası:", e);
+    }
+  }
+
   const listUrl = new URL("https://tr.wikipedia.org/w/api.php");
   listUrl.search = new URLSearchParams({
     action: "query",
@@ -96,6 +112,16 @@ async function generateAndSendPost(env, chatId, origin) {
   let selectedFact = null;
 
   for (const page of shuffledPages) {
+    // 1. D1 kontrolü: Sayfa başlığı daha önce kullanıldı mı?
+    if (env.DB) {
+      try {
+        const row = await env.DB.prepare("SELECT page_title FROM sent_facts WHERE page_title = ?")
+          .bind(page.title)
+          .first();
+        if (row) continue;
+      } catch (e) {}
+    }
+
     const parseUrl = new URL("https://tr.wikipedia.org/w/api.php");
     parseUrl.search = new URLSearchParams({
       action: "parse",
@@ -131,10 +157,23 @@ async function generateAndSendPost(env, chatId, origin) {
           !cleanText.toLowerCase().includes("standart resim") &&
           !cleanText.toLowerCase().includes("madde önerileri")
         ) {
+          const factHash = simpleHash(cleanText);
+
+          // 2. D1 kontrolü: Metin özeti daha önce kullanıldı mı?
+          if (env.DB) {
+            try {
+              const rowHash = await env.DB.prepare("SELECT fact_hash FROM sent_facts WHERE fact_hash = ?")
+                .bind(factHash)
+                .first();
+              if (rowHash) continue;
+            } catch (e) {}
+          }
+
           selectedFact = {
             title: page.title,
             text: cleanText,
-            imageUrl: imgUrl
+            imageUrl: imgUrl,
+            hash: factHash
           };
           break;
         }
@@ -144,9 +183,10 @@ async function generateAndSendPost(env, chatId, origin) {
 
   if (!selectedFact) {
     selectedFact = {
-      title: "Vikipedi:Biliyor muydunuz",
+      title: "Vikipedi:Biliyor muydunuz/" + Date.now(),
       text: "Osmanlı padişahı III. Osman sarayda dolaşırken cariyelerle karşılaşmak istemediği için ayakkabılarına demir ökçeler taktırmıştı.",
-      imageUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1a/Osman_III.jpg/1200px-Osman_III.jpg"
+      imageUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1a/Osman_III.jpg/1200px-Osman_III.jpg",
+      hash: simpleHash("Osmanlı padişahı III. Osman demir ökçeler")
     };
   }
 
@@ -218,10 +258,20 @@ ${selectedFact.text}
     });
   }
 
+  // 3. D1 Kayıt: Gönderilen içeriği veritabanına işle
+  if (env.DB) {
+    try {
+      await env.DB.prepare("INSERT OR IGNORE INTO sent_facts (page_title, fact_hash) VALUES (?, ?)")
+        .bind(selectedFact.title, selectedFact.hash)
+        .run();
+    } catch (e) {
+      console.error("D1 kayıt hatası:", e);
+    }
+  }
+
   return `Gönderildi: ${selectedFact.title}`;
 }
 
-// 1 Tıkla PNG Olarak Kaydeden Önizleme ve İndirme Motoru
 async function handleViewPage(url) {
   const svgUrl = `/image?${url.searchParams.toString()}`;
   const ratio = url.searchParams.get("ratio") || "square";
@@ -301,7 +351,6 @@ async function handleViewPage(url) {
   });
 }
 
-// Görsel SVG Render Motoru (Görseli Base64 Olarak İçine Gömer)
 async function handleImageGeneration(url) {
   const text = url.searchParams.get("text") || "Tarihin tozlu raflarında kalmış ilginç ve bilinmeyen detaylar.";
   const bgImg = url.searchParams.get("img") || "";
@@ -310,7 +359,6 @@ async function handleImageGeneration(url) {
   const width = 1080;
   const height = ratio === "portrait" ? 1350 : 1080;
 
-  // Görseli indirip Base64 Data URL'e çevir (Tek parça olması için)
   let embeddedImgData = bgImg;
   if (bgImg && bgImg.startsWith("http")) {
     try {
@@ -326,7 +374,6 @@ async function handleImageGeneration(url) {
     }
   }
 
-  // Metin Satırlama
   const maxLineChars = ratio === "portrait" ? 44 : 48;
   const words = text.toLocaleUpperCase("tr-TR").split(" ");
   const lines = [];
@@ -516,4 +563,13 @@ function escapeHtml(s) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
-    }
+}
+
+function simpleHash(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return String(hash);
+}
