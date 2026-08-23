@@ -59,7 +59,7 @@ export default {
 };
 
 const WIKI_HEADERS = {
-  "User-Agent": "WikipediaInstagramBot/10.0 (contact: telegramherokuhesabi3@gmail.com)",
+  "User-Agent": "WikipediaInstagramBot/11.0 (contact: telegramherokuhesabi3@gmail.com)",
   "Accept": "application/json"
 };
 
@@ -69,7 +69,6 @@ const AYLAR = [
 ];
 
 async function generateAndSendPost(env, chatId, origin) {
-  // Rastgele bir Ay ve Yıl arşivi seç (2016 - 2024 arası)
   const randomYil = Math.floor(Math.random() * (2024 - 2016 + 1)) + 2016;
   const randomAy = AYLAR[Math.floor(Math.random() * AYLAR.length)];
   const pageTitle = `Vikipedi:Biliyor muydunuz/${randomAy} ${randomYil}`;
@@ -145,7 +144,7 @@ ${selectedFact.text}
   const telegramMessage =
 `✨ <b>YENİ İNSTAGRAM İÇERİĞİNİZ HAZIR!</b>
 
-📝 <b>Instagram Açıklaması (Kopyalamak için tıklayın):</b>
+📝 <b>Instagram Açıklaması:</b>
 <code>${escapeHtml(instagramCaption)}</code>
 
 🔗 <b>Kaynak:</b> <a href="${dynamicSourceUrl}">Vikipedi</a>
@@ -154,20 +153,41 @@ ${selectedFact.text}
 ▪️ <a href="${squareUrl}">Kare Görseli İndir (1:1)</a>
 ▪️ <a href="${portraitUrl}">Portre Görseli İndir (4:5)</a>`;
 
-  const tgRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      photo: selectedFact.imageUrl,
-      caption: telegramMessage,
-      parse_mode: "HTML"
-    })
-  });
+  // Görseli doğrudan Worker üzerinden çekip Telegram'a binary formData olarak yükle
+  let sent = false;
+  try {
+    const imgFetch = await fetch(selectedFact.imageUrl, { headers: WIKI_HEADERS });
+    if (imgFetch.ok) {
+      const blob = await imgFetch.blob();
+      const formData = new FormData();
+      formData.append("chat_id", chatId);
+      formData.append("photo", blob, "image.jpg");
+      formData.append("caption", telegramMessage);
+      formData.append("parse_mode", "HTML");
 
-  const tgData = await tgRes.json();
-  if (!tgData.ok) {
-    throw new Error(`Telegram Hatası: ${tgData.description}`);
+      const tgRes = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+        method: "POST",
+        body: formData
+      });
+      const tgData = await tgRes.json();
+      if (tgData.ok) sent = true;
+    }
+  } catch (err) {
+    console.error("Görsel yükleme hatası:", err);
+  }
+
+  // Eğer fotoğraf yüklenemezse doğrudan metin mesajı olarak ilet
+  if (!sent) {
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: telegramMessage,
+        parse_mode: "HTML",
+        disable_web_page_preview: false
+      })
+    });
   }
 
   return `Başarılı! Telegram'a gönderildi (${selectedFact.title})`;
