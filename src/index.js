@@ -8,12 +8,17 @@ export default {
 
     if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
 
-    // 1. Instagram Görsel SVG Motoru
+    // 1. İndirilebilir HTML / Görsel Önizleme Sayfası
+    if (url.pathname === "/view") {
+      return handleViewPage(url);
+    }
+
+    // 2. Ham SVG Motoru
     if (url.pathname === "/image") {
       return handleImageGeneration(url);
     }
 
-    // 2. Webhook Kurulumu (/set-webhook)
+    // 3. Webhook Kurulumu (/set-webhook)
     if (url.pathname === "/set-webhook") {
       const webhookUrl = `${url.origin}/webhook`;
       const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
@@ -23,7 +28,7 @@ export default {
       });
     }
 
-    // 3. Telegram Webhook Gelen Komutlar (/hazirla)
+    // 4. Telegram Webhook Gelen Komutlar (/hazirla)
     if (url.pathname === "/webhook" && request.method === "POST") {
       try {
         const update = await request.json();
@@ -41,7 +46,7 @@ export default {
       return new Response("OK", { status: 200 });
     }
 
-    // 4. Tarayıcıdan Manuel Tetikleme (Test Linki)
+    // 5. Tarayıcıdan Manuel Tetikleme (Test Linki)
     try {
       const webhookUrl = `${url.origin}/webhook`;
       await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
@@ -166,7 +171,7 @@ ${selectedFact.text}
 
 🔗 <b>Kaynak:</b> <a href="${dynamicSourceUrl}">Vikipedi</a>
 
-👇 <i>Aşağıdaki butonlardan formatı seçip görseli indirebilirsiniz:</i>`;
+👇 <i>Aşağıdaki butonlardan formatı seçip görseli cihazınıza kaydedin:</i>`;
 
   const squareParams = new URLSearchParams({ text: selectedFact.text, img: selectedFact.imageUrl, ratio: "square" });
   const portraitParams = new URLSearchParams({ text: selectedFact.text, img: selectedFact.imageUrl, ratio: "portrait" });
@@ -174,8 +179,8 @@ ${selectedFact.text}
   const replyMarkup = {
     inline_keyboard: [
       [
-        { text: "📥 Instagram Kare (1:1)", url: `${origin}/image?${squareParams.toString()}` },
-        { text: "📥 Instagram Portre (4:5)", url: `${origin}/image?${portraitParams.toString()}` }
+        { text: "📥 Instagram Kare (1:1)", url: `${origin}/view?${squareParams.toString()}` },
+        { text: "📥 Instagram Portre (4:5)", url: `${origin}/view?${portraitParams.toString()}` }
       ]
     ]
   };
@@ -216,8 +221,88 @@ ${selectedFact.text}
   return `Gönderildi: ${selectedFact.title}`;
 }
 
-// Görsel SVG Render Motoru (Referans Tasarıma Birebir Uygun)
-function handleImageGeneration(url) {
+// 1 Tıkla PNG Olarak Kaydeden Önizleme ve İndirme Motoru
+async function handleViewPage(url) {
+  const svgUrl = `/image?${url.searchParams.toString()}`;
+  const ratio = url.searchParams.get("ratio") || "square";
+
+  const html = `<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Instagram Gönderi İndir</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    body { background: #0f172a; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+    .container { max-width: 500px; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 18px; }
+    .preview-box { width: 100%; border-radius: 14px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.6); background: #000; }
+    .preview-box img { width: 100%; height: auto; display: block; }
+    .btn { width: 100%; padding: 16px; font-size: 17px; font-weight: 700; color: #000; background: #f59e0b; border: none; border-radius: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; text-decoration: none; box-shadow: 0 4px 14px rgba(245, 158, 11, 0.4); }
+    .btn:active { transform: scale(0.98); }
+    .tip { font-size: 13px; color: #94a3b8; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="preview-box">
+      <img id="postImg" src="${svgUrl}" alt="Instagram Post">
+    </div>
+    <button class="btn" id="downloadBtn" onclick="downloadAsPng()">
+      📥 Görseli Galeriye İndir (PNG)
+    </button>
+    <p class="tip">Butona tıklayarak yazılı ve tasarımlı halini tam çözünürlükte kaydedebilirsiniz.</p>
+  </div>
+
+  <script>
+    async function downloadAsPng() {
+      const btn = document.getElementById('downloadBtn');
+      btn.innerText = '⏳ Hazırlanıyor...';
+      try {
+        const res = await fetch('${svgUrl}');
+        const svgText = await res.text();
+        
+        const width = 1080;
+        const height = '${ratio}' === 'portrait' ? 1350 : 1080;
+        
+        const img = new Image();
+        const svgBlob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
+        const blobUrl = URL.createObjectURL(svgBlob);
+        
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          URL.revokeObjectURL(blobUrl);
+          
+          const pngUrl = canvas.toDataURL('image/png');
+          const a = document.createElement('a');
+          a.download = 'instagram_post.png';
+          a.href = pngUrl;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          btn.innerText = '✅ İndirildi!';
+          setTimeout(() => { btn.innerText = '📥 Görseli Galeriye İndir (PNG)'; }, 2000);
+        };
+        img.src = blobUrl;
+      } catch (err) {
+        btn.innerText = '❌ Hata Oluştu';
+      }
+    }
+  </script>
+</body>
+</html>`;
+
+  return new Response(html, {
+    headers: { "Content-Type": "text/html; charset=utf-8" }
+  });
+}
+
+// Görsel SVG Render Motoru (Görseli Base64 Olarak İçine Gömer)
+async function handleImageGeneration(url) {
   const text = url.searchParams.get("text") || "Tarihin tozlu raflarında kalmış ilginç ve bilinmeyen detaylar.";
   const bgImg = url.searchParams.get("img") || "";
   const ratio = url.searchParams.get("ratio") || "square";
@@ -225,7 +310,23 @@ function handleImageGeneration(url) {
   const width = 1080;
   const height = ratio === "portrait" ? 1350 : 1080;
 
-  // Metin Satırlama (Ortalanmış ve Ferah)
+  // Görseli indirip Base64 Data URL'e çevir (Tek parça olması için)
+  let embeddedImgData = bgImg;
+  if (bgImg && bgImg.startsWith("http")) {
+    try {
+      const imgRes = await fetch(bgImg, { headers: WIKI_HEADERS });
+      if (imgRes.ok) {
+        const buffer = await imgRes.arrayBuffer();
+        const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+        const contentType = imgRes.headers.get("content-type") || "image/jpeg";
+        embeddedImgData = `data:${contentType};base64,${base64}`;
+      }
+    } catch (e) {
+      embeddedImgData = bgImg;
+    }
+  }
+
+  // Metin Satırlama
   const maxLineChars = ratio === "portrait" ? 44 : 48;
   const words = text.toLocaleUpperCase("tr-TR").split(" ");
   const lines = [];
@@ -244,7 +345,6 @@ function handleImageGeneration(url) {
   const lineHeight = 46;
   const totalTextHeight = lines.length * lineHeight;
   
-  // Metin Konumlandırma
   const bottomMargin = ratio === "portrait" ? 140 : 110;
   const startY = height - bottomMargin - totalTextHeight;
   const titleY = startY - 70;
@@ -282,7 +382,6 @@ function handleImageGeneration(url) {
         }
       </style>
 
-      <!-- Sadece Yazı Bölgesine Özel Yumuşak Karartma Degrade Katmanı -->
       <linearGradient id="textOnlyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
         <stop offset="0%" stop-color="#000000" stop-opacity="0" />
         <stop offset="48%" stop-color="#000000" stop-opacity="0.25" />
@@ -291,26 +390,21 @@ function handleImageGeneration(url) {
         <stop offset="100%" stop-color="#000000" stop-opacity="1" />
       </linearGradient>
 
-      <!-- Metin Okunurluğu İçin Yumuşak Gölge -->
       <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
         <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#000000" flood-opacity="0.9"/>
       </filter>
     </defs>
 
-    <!-- Zemin ve Orijinal Görsel -->
     <rect width="${width}" height="${height}" fill="#0a0a0a" />
-    ${bgImg ? `<image href="${escapeXml(bgImg)}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" opacity="0.95" />` : ""}
+    ${embeddedImgData ? `<image href="${embeddedImgData}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" opacity="0.95" />` : ""}
     
-    <!-- Yalnızca Metin Alanını Karartan Gradyan -->
     <rect width="${width}" height="${height}" fill="url(#textOnlyGrad)" />
 
-    <!-- Sol Üst: Instagram Rozeti (@biliyormuydunuz) -->
+    <!-- Sol Üst: Instagram Rozeti -->
     <g transform="translate(60, 65)">
-      <!-- Instagram İkon Çerçevesi -->
       <rect x="0" y="0" width="44" height="44" rx="12" fill="none" stroke="#ffffff" stroke-width="3" />
       <circle cx="22" cy="22" r="10" fill="none" stroke="#ffffff" stroke-width="3" />
       <circle cx="32" cy="12" r="2.5" fill="#ffffff" />
-      
       <text x="56" y="30" class="watermark-text" filter="url(#softShadow)">
         ${escapeXml(WATERMARK)}
       </text>
@@ -321,38 +415,30 @@ function handleImageGeneration(url) {
       BİLİYOR MUYDUNUZ?
     </text>
 
-    <!-- İnce Sarı Ayırıcı Çizgi -->
+    <!-- Ayırıcı Çizgi -->
     <line x1="490" y1="${lineY}" x2="590" y2="${lineY}" stroke="#f59e0b" stroke-width="3.5" stroke-linecap="round" />
 
-    <!-- Gövde Metni (Bebas Neue Fontuyla Ortalanmış) -->
+    <!-- Gövde Metni -->
     <text text-anchor="middle" class="main-text" filter="url(#softShadow)">
       ${tspanLines}
     </text>
 
-    <!-- Alt Kısım: Minimalist İkonlar (Kaydet, Beğen, Yorum, Paylaş) -->
+    <!-- Alt Kısım: İkonlar -->
     <g transform="translate(340, ${height - 65})">
-      <!-- 1. Kaydet (Bookmark) -->
       <g stroke="#ffffff" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="translate(0, 0) scale(1.1)">
         <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
       </g>
-
-      <!-- 2. Kalp (Like) -->
       <g stroke="#ffffff" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="translate(120, 0) scale(1.1)">
         <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
       </g>
-
-      <!-- 3. Yorum (Comment) -->
       <g stroke="#ffffff" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="translate(240, 0) scale(1.1)">
         <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
       </g>
-
-      <!-- 4. Paylaş (Share / Uçak) -->
       <g stroke="#ffffff" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="translate(360, 0) scale(1.1)">
         <line x1="22" y1="2" x2="11" y2="13"/>
         <polygon points="22 2 15 22 11 13 2 9 22 2"/>
       </g>
     </g>
-
   </svg>
   `;
 
@@ -430,4 +516,4 @@ function escapeHtml(s) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
-}
+    }
