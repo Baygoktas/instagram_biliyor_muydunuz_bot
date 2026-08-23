@@ -2,15 +2,17 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
+    if (url.pathname === "/favicon.ico") {
+      return new Response(null, { status: 204 });
+    }
 
-    // 1. Instagram Görselini Üreten SVG Motoru
+    // 1. Instagram SVG Görsel Motoru
     if (url.pathname === "/image") {
       return handleImageGeneration(url);
     }
 
     // 2. Webhook Kurulumu (/set-webhook)
-    if (url.pathname === "/set-webhook") 
+    if (url.pathname === "/set-webhook") {
       const token = env.TELEGRAM_BOT_TOKEN || "7498614075:AAHepFlPgEvvohNwg-BWUrgAW1OrbxEUXeo";
       const webhookUrl = `${url.origin}/webhook`;
       const res = await fetch(`https://api.telegram.org/bot${token}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
@@ -20,7 +22,7 @@ export default {
       });
     }
 
-    // 3. Telegram Webhook Gelen Komutlar
+    // 3. Telegram Webhook Gelen Komutlar (/hazirla)
     if (url.pathname === "/webhook" && request.method === "POST") {
       try {
         const update = await request.json();
@@ -46,7 +48,7 @@ export default {
         headers: { "Content-Type": "text/plain; charset=utf-8" }
       });
     } catch (err) {
-      return new Response(`Hata Detayı:\n${err.message}\n\n${err.stack}`, {
+      return new Response(`Hata:\n${err.message}\n\n${err.stack}`, {
         status: 200,
         headers: { "Content-Type": "text/plain; charset=utf-8" }
       });
@@ -55,7 +57,7 @@ export default {
 };
 
 const WIKI_HEADERS = {
-  "User-Agent": "WikipediaInstagramBot/9.0 (contact: telegramherokuhesabi3@gmail.com)",
+  "User-Agent": "WikipediaInstagramBot/10.0 (contact: telegramherokuhesabi3@gmail.com)",
   "Accept": "application/json"
 };
 
@@ -69,13 +71,13 @@ async function generateAndSendPost(env, chatId, origin) {
   const watermark = env.CHANNEL_WATERMARK || "@Tarihtebugun";
 
   if (!token || token.includes("BURAYA_BOT")) {
-    throw new Error("TELEGRAM_BOT_TOKEN girilmemiş! Lütfen koddaki BURAYA_BOT_TOKENINIZ alanını doldurun.");
+    throw new Error("TELEGRAM_BOT_TOKEN tanımlanmadı!");
   }
   if (!chatId || chatId.includes("BURAYA_OZEL")) {
-    throw new Error("TELEGRAM_CHAT_ID girilmemiş! Lütfen koddaki BURAYA_OZEL_TELEGRAM_CHAT_ID alanını doldurun.");
+    throw new Error("TELEGRAM_CHAT_ID tanımlanmadı!");
   }
 
-  // Rastgele bir Ay ve Yıl arşivi seç (2015 - 2024 arası)
+  // Rastgele bir Ay ve Yıl arşivi seç (2016 - 2024 arası)
   const randomYil = Math.floor(Math.random() * (2024 - 2016 + 1)) + 2016;
   const randomAy = AYLAR[Math.floor(Math.random() * AYLAR.length)];
   const pageTitle = `Vikipedi:Biliyor muydunuz/${randomAy} ${randomYil}`;
@@ -98,12 +100,10 @@ async function generateAndSendPost(env, chatId, origin) {
     const wikitext = data?.parse?.wikitext || "";
 
     if (wikitext) {
-      // Satırları ayrıştır (* veya ; ile başlayanlar)
       const lines = wikitext.split("\n").filter(l => l.trim().startsWith("*") || l.trim().startsWith(";"));
       const shuffledLines = lines.sort(() => 0.5 - Math.random());
 
       for (const line of shuffledLines) {
-        // Görsel var mı?
         const imgMatch = line.match(/\[\[(?:Dosya|Resim|File|Image):([^|\]\n]+)/i);
         if (imgMatch && imgMatch[1]) {
           const fileName = imgMatch[1].trim();
@@ -126,7 +126,6 @@ async function generateAndSendPost(env, chatId, origin) {
     console.error("Wikipedia ayrıştırma hatası:", e);
   }
 
-  // Sayfada görsel bulunamazsa yedek tarihi görsel ve bilgi havuzu
   if (!selectedFact) {
     selectedFact = {
       title: "Vikipedi:Biliyor muydunuz",
@@ -138,7 +137,6 @@ async function generateAndSendPost(env, chatId, origin) {
   const encodedTitle = encodeURIComponent(selectedFact.title.replace(/ /g, "_"));
   const dynamicSourceUrl = `https://tr.wikipedia.org/wiki/${encodedTitle}`;
 
-  // Instagram Açıklaması
   const instagramCaption = 
 `💡 Bunu biliyor muydunuz?
 
@@ -164,7 +162,6 @@ ${selectedFact.text}
 ▪️ <a href="${squareUrl}">Kare Görseli İndir (1:1)</a>
 ▪️ <a href="${portraitUrl}">Portre Görseli İndir (4:5)</a>`;
 
-  // Telegram'a Fotoğraflı Gönderim
   const tgRes = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -184,7 +181,6 @@ ${selectedFact.text}
   return `Başarılı! Telegram'a gönderildi (${selectedFact.title})`;
 }
 
-// Görsel Render Motoru (Gelişmiş SVG Tasarımı)
 function handleImageGeneration(url) {
   const text = url.searchParams.get("text") || "Bunu biliyor muydunuz?";
   const bgImg = url.searchParams.get("img") || "";
@@ -236,12 +232,10 @@ function handleImageGeneration(url) {
     </defs>
 
     <rect width="${width}" height="${height}" fill="#0a0a0a" />
-
     ${bgImg ? `<image href="${escapeXml(bgImg)}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" opacity="0.90" />` : ""}
-
     <rect width="${width}" height="${height}" fill="url(#bottomGrad)" />
 
-    <!-- Sol Üst Filigran -->
+    <!-- Sol Üst Filigran Rozeti -->
     <g transform="translate(60, 80)">
       <rect x="0" y="0" width="${watermark.length * 16 + 40}" height="46" rx="23" fill="#000000" fill-opacity="0.55" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5" />
       <circle cx="23" cy="23" r="6" fill="#f59e0b" />
@@ -343,4 +337,4 @@ function escapeHtml(s) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
-             }
+}
