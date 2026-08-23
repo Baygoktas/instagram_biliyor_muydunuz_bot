@@ -8,7 +8,7 @@ export default {
 
     if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
 
-    // Görsel Üretim
+    // Görsel Üretim Endpoint'i
     if (url.pathname === "/image") {
       return handleImageGeneration(url);
     }
@@ -50,27 +50,25 @@ export default {
         headers: { "Content-Type": "text/plain; charset=utf-8" }
       });
     } catch (err) {
-      return new Response(`Hata:\n${err.message}`, { status: 500 });
+      return new Response(`Hata:\n${err.message}\n\n${err.stack}`, { status: 500 });
     }
   }
 };
 
 const WIKI_HEADERS = {
-  "User-Agent": "WikipediaInstagramBot/6.0 (contact: telegramherokuhesabi3@gmail.com)",
-  "Api-User-Agent": "WikipediaInstagramBot/6.0 (contact: telegramherokuhesabi3@gmail.com)",
+  "User-Agent": "WikipediaInstagramBot/7.0 (contact: telegramherokuhesabi3@gmail.com)",
+  "Api-User-Agent": "WikipediaInstagramBot/7.0 (contact: telegramherokuhesabi3@gmail.com)",
   "Accept": "application/json"
 };
 
 async function generateAndSendPost(env, chatId, origin) {
-  const now = new Date();
-  const cutoff = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+  const cutoff = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
   const start = new Date("2010-01-01T00:00:00Z");
 
   const randomMs = Math.floor(Math.random() * (cutoff.getTime() - start.getTime()));
   const targetDate = new Date(start.getTime() + randomMs);
   const targetDateStr = targetDate.toISOString().slice(0, 10);
 
-  // 1. Orijinal çalışan allpages sorgusu
   const listUrl = new URL("https://tr.wikipedia.org/w/api.php");
   listUrl.search = new URLSearchParams({
     action: "query",
@@ -87,26 +85,12 @@ async function generateAndSendPost(env, chatId, origin) {
   const listData = await listRes.json();
   const pages = listData?.query?.allpages || [];
 
-  const candidates = pages
-    .map(p => p.title || "")
-    .map(title => {
-      const m = title.match(/(\d{4})-(\d{2})-(\d{2})$/);
-      return m ? { title, date: `${m[1]}-${m[2]}-${m[3]}` } : null;
-    })
-    .filter(Boolean)
-    .filter(x => new Date(x.date).getTime() < cutoff.getTime());
-
-  if (!candidates.length) {
-    // Prefix fallback
-    candidates.push(...pages.map(p => ({ title: p.title, date: targetDateStr })));
-  }
-
-  const shuffled = candidates.sort(() => 0.5 - Math.random());
+  const candidates = pages.sort(() => 0.5 - Math.random());
   let selected = null;
   let rawWikitext = "";
   let imageUrl = null;
 
-  for (const item of shuffled) {
+  for (const item of candidates) {
     if (env.DB) {
       const row = await env.DB.prepare("SELECT page_title FROM sent_facts WHERE page_title = ?")
         .bind(item.title)
@@ -141,9 +125,8 @@ async function generateAndSendPost(env, chatId, origin) {
   }
 
   if (!selected || !imageUrl) {
-    // Görselli bulunamazsa arşivden ilk geçerliyi alıp seçkin görsellerden arka plan eşle
-    selected = shuffled[0];
-    imageUrl = "https://commons.wikimedia.org/wiki/Special:FilePath/Featured_picture.svg?width=1200";
+    selected = candidates[0] || { title: "Vikipedi:Biliyor muydunuz?/2020-01-01" };
+    imageUrl = "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg/800px-Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg";
     const parseUrl = new URL("https://tr.wikipedia.org/w/api.php");
     parseUrl.search = new URLSearchParams({
       action: "parse",
@@ -162,13 +145,13 @@ async function generateAndSendPost(env, chatId, origin) {
   cleanText = cleanText.replace(/^(?:Vikipedi|Biliyor muydu(?:nuz)?\??|Arşiv|Ana sayfa)[^.!?]*[.!?]?\s*/i, "").trim();
 
   if (!cleanText || cleanText.length < 20) {
-    cleanText = "Tarihin derinliklerinde kalmış ilginç bilgiler ve olaylar.";
+    cleanText = "Tarihin tozlu raflarından ilginç ve bilinmeyen detaylar.";
   }
 
   const encodedTitle = encodeURIComponent(selected.title.replace(/ /g, "_"));
   const dynamicSourceUrl = `https://tr.wikipedia.org/wiki/${encodedTitle}`;
 
-  // Instagram Açıklama Taslağı
+  // Instagram Açıklaması
   const instagramCaption = 
 `💡 Bunu biliyor muydunuz?
 
@@ -179,39 +162,37 @@ ${cleanText}
 .
 #tarih #tarihtebugun #bunubiliyormuydunuz #bilgi #genelkültür #tarihieser #tariharsivi`;
 
-  const telegramCaptionText =
-`✨ <b>YENİ İNSTAGRAM İÇERİĞİNİZ HAZIR!</b>
-
-📝 <b>Instagram Açıklaması (Kopyalamak için tıklayın):</b>
-<code>${escapeHtml(instagramCaption)}</code>
-
-🔗 <b>Kaynak:</b> <a href="${dynamicSourceUrl}">Vikipedi</a>`;
-
   const squareUrl = `${origin}/image?text=${encodeURIComponent(cleanText)}&img=${encodeURIComponent(imageUrl)}&wm=${encodeURIComponent(WATERMARK)}&ratio=square`;
   const portraitUrl = `${origin}/image?text=${encodeURIComponent(cleanText)}&img=${encodeURIComponent(imageUrl)}&wm=${encodeURIComponent(WATERMARK)}&ratio=portrait`;
 
-  // 2 Görseli İlet
-  await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+  const telegramMessage =
+`✨ <b>YENİ İNSTAGRAM İÇERİĞİNİZ HAZIR!</b>
+
+📝 <b>Instagram Açıklaması:</b>
+<code>${escapeHtml(instagramCaption)}</code>
+
+🔗 <b>Kaynak:</b> <a href="${dynamicSourceUrl}">Vikipedi</a>
+
+📥 <b>Hazırlanan Instagram Görselleri:</b>
+▪️ <a href="${squareUrl}">Kare Formatı Gör (1:1)</a>
+▪️ <a href="${portraitUrl}">Portre Formatı Gör (4:5)</a>`;
+
+  // Telegram'a Fotoğraflı Gönderim Yap (Görseli Telegram %100 yükler)
+  const tgRes = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       chat_id: chatId,
-      photo: squareUrl,
-      caption: "🖼 <b>Instagram Kare (1:1)</b>\n\n" + telegramCaptionText,
+      photo: imageUrl,
+      caption: telegramMessage,
       parse_mode: "HTML"
     })
   });
 
-  await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      photo: portraitUrl,
-      caption: "🖼 <b>Instagram Portre (4:5)</b>",
-      parse_mode: "HTML"
-    })
-  });
+  const tgData = await tgRes.json();
+  if (!tgData.ok) {
+    throw new Error(`Telegram Hatası: ${tgData.description}`);
+  }
 
   if (env.DB) {
     const factHash = simpleHash(cleanText);
@@ -220,7 +201,7 @@ ${cleanText}
       .run();
   }
 
-  return `Başarılı! Gönderildi: ${selected.title}`;
+  return `Başarılı! Telegram'a gönderildi: ${selected.title}`;
 }
 
 // Görsel Render Motoru
@@ -280,7 +261,7 @@ function handleImageGeneration(url) {
 
     <rect width="${width}" height="${height}" fill="url(#bottomGrad)" />
 
-    <!-- Sol Üst Filigran Rozeti -->
+    <!-- Sol Üst Filigran -->
     <g transform="translate(60, 80)">
       <rect x="0" y="0" width="${watermark.length * 16 + 40}" height="46" rx="23" fill="#000000" fill-opacity="0.55" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5" />
       <circle cx="23" cy="23" r="6" fill="#f59e0b" />
@@ -327,6 +308,9 @@ function escapeXml(s) {
 async function fetchWikipediaImageUrl(fileName) {
   try {
     const cleanName = fileName.replace(/^(?:Dosya|Resim|File|Image):/i, "").trim();
+    const ext = cleanName.split(".").pop().toLowerCase();
+    if (["svg", "tif", "tiff", "ogg", "ogv", "pdf"].includes(ext)) return null;
+
     const imgApiUrl = new URL("https://tr.wikipedia.org/w/api.php");
     imgApiUrl.search = new URLSearchParams({
       action: "query",
