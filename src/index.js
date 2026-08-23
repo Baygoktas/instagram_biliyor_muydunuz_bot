@@ -1,5 +1,6 @@
 const BOT_TOKEN = "7498614075:AAHepFlPgEvvohNwg-BWUrgAW1OrbxEUXeo";
 const MY_CHAT_ID = "1283445630";
+const WATERMARK = "@biliyormuydunuz";
 
 export default {
   async fetch(request, env, ctx) {
@@ -224,138 +225,132 @@ function handleImageGeneration(url) {
   const width = 1080;
   const height = ratio === "portrait" ? 1350 : 1080;
 
-  // Başlık ayrıştırma (İlk 2-3 kelime)
-  const words = text.split(" ");
-  const titleCount = words.length > 15 ? 3 : (words.length > 5 ? 2 : 1);
-  const titleStr = words.slice(0, titleCount).join(" ").toLocaleUpperCase("tr-TR");
-  const bodyStr = words.slice(titleCount).join(" ").toLocaleUpperCase("tr-TR");
+  // Metin Satırlama (Ortalanmış ve Ferah)
+  const maxLineChars = ratio === "portrait" ? 44 : 48;
+  const words = text.toLocaleUpperCase("tr-TR").split(" ");
+  const lines = [];
+  let cur = "";
 
-  // BAŞLIK Satırlama
-  const titleLines = [];
-  let curT = "";
-  for (const w of titleStr.split(" ")) {
-    if ((curT + " " + w).trim().length > 12) {
-      if (curT) titleLines.push(curT.trim());
-      curT = w;
+  for (const w of words) {
+    if ((cur + " " + w).trim().length > maxLineChars) {
+      if (cur) lines.push(cur.trim());
+      cur = w;
     } else {
-      curT += " " + w;
+      cur += " " + w;
     }
   }
-  if (curT) titleLines.push(curT.trim());
+  if (cur) lines.push(cur.trim());
 
-  // GÖVDE Satırlama
-  const maxBodyChars = ratio === "portrait" ? 30 : 34;
-  const bodyLines = [];
-  let curB = "";
-  for (const w of bodyStr.split(" ")) {
-    if ((curB + " " + w).trim().length > maxBodyChars) {
-      if (curB) bodyLines.push(curB.trim());
-      curB = w;
-    } else {
-      curB += " " + w;
-    }
-  }
-  if (curB) bodyLines.push(curB.trim());
+  const lineHeight = 46;
+  const totalTextHeight = lines.length * lineHeight;
+  
+  // Metin Konumlandırma
+  const bottomMargin = ratio === "portrait" ? 140 : 110;
+  const startY = height - bottomMargin - totalTextHeight;
+  const titleY = startY - 70;
+  const lineY = titleY + 25;
 
-  let currentY = 320;
-
-  const titleSvg = titleLines.map((line, idx) => {
-    const fill = (idx % 2 === 1) ? "#38b2ac" : "#ffffff";
-    const t = `<tspan x="70" y="${currentY}" fill="${fill}">${escapeXml(line)}</tspan>`;
-    currentY += 95;
-    return t;
-  }).join("");
-
-  const bodyStartY = currentY;
-  currentY += 20;
-
-  const bodySvg = bodyLines.map((line) => {
-    const t = `<tspan x="90" y="${currentY}">${escapeXml(line)}</tspan>`;
-    currentY += 40;
-    return t;
-  }).join("");
-
-  const bodyEndY = currentY - 40;
+  const tspanLines = lines
+    .map((line, idx) => `<tspan x="540" y="${startY + idx * lineHeight}">${escapeXml(line)}</tspan>`)
+    .join("");
 
   const svg = `
   <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
     <defs>
       <style>
-        @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&amp;family=Dancing+Script:wght@700&amp;family=Inter:wght@400;600&amp;display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&amp;family=Inter:wght@500;700&amp;display=swap');
         
-        .title-text { font-family: 'Bebas Neue', sans-serif; font-size: 100px; font-weight: normal; letter-spacing: 2px; }
-        .cursive-text { font-family: 'Dancing Script', cursive; font-size: 60px; fill: #38b2ac; }
-        .body-text { font-family: 'Bebas Neue', sans-serif; font-size: 36px; fill: #e2e8f0; letter-spacing: 1.5px; }
-        .small-bold { font-family: 'Inter', sans-serif; font-size: 14px; font-weight: 600; letter-spacing: 2.5px; fill: #ffffff; }
+        .header-title {
+          font-family: 'Bebas Neue', 'Impact', sans-serif;
+          font-size: 56px;
+          letter-spacing: 3px;
+          fill: #f59e0b;
+        }
+        .main-text {
+          font-family: 'Bebas Neue', 'Impact', sans-serif;
+          font-size: 34px;
+          letter-spacing: 1.6px;
+          word-spacing: 2px;
+          fill: #ffffff;
+        }
+        .watermark-text {
+          font-family: 'Inter', sans-serif;
+          font-size: 22px;
+          font-weight: 700;
+          letter-spacing: 0.5px;
+          fill: #ffffff;
+        }
       </style>
 
-      <!-- Soldan Sağa Karartma Gradyanı -->
-      <linearGradient id="leftGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-        <stop offset="0%" stop-color="#070b0d" stop-opacity="1" />
-        <stop offset="45%" stop-color="#070b0d" stop-opacity="0.95" />
-        <stop offset="70%" stop-color="#070b0d" stop-opacity="0.4" />
-        <stop offset="100%" stop-color="#070b0d" stop-opacity="0" />
+      <!-- Sadece Yazı Bölgesine Özel Yumuşak Karartma Degrade Katmanı -->
+      <linearGradient id="textOnlyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+        <stop offset="0%" stop-color="#000000" stop-opacity="0" />
+        <stop offset="48%" stop-color="#000000" stop-opacity="0.25" />
+        <stop offset="70%" stop-color="#000000" stop-opacity="0.85" />
+        <stop offset="90%" stop-color="#000000" stop-opacity="0.98" />
+        <stop offset="100%" stop-color="#000000" stop-opacity="1" />
       </linearGradient>
 
-      <!-- Gölge Filtresi -->
+      <!-- Metin Okunurluğu İçin Yumuşak Gölge -->
       <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
         <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#000000" flood-opacity="0.9"/>
       </filter>
     </defs>
 
-    <!-- Zemin ve Orijinal Görsel (Sağa Dayalı) -->
+    <!-- Zemin ve Orijinal Görsel -->
     <rect width="${width}" height="${height}" fill="#0a0a0a" />
-    ${bgImg ? `<image href="${escapeXml(bgImg)}" width="${width}" height="${height}" preserveAspectRatio="xMaxYMid slice" opacity="0.90" />` : ""}
+    ${bgImg ? `<image href="${escapeXml(bgImg)}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" opacity="0.95" />` : ""}
     
-    <!-- Soldan Sağa Karartma -->
-    <rect width="${width}" height="${height}" fill="url(#leftGrad)" />
+    <!-- Yalnızca Metin Alanını Karartan Gradyan -->
+    <rect width="${width}" height="${height}" fill="url(#textOnlyGrad)" />
 
-    <!-- Dış Çerçeve -->
-    <rect x="30" y="30" width="${width - 60}" height="${height - 60}" fill="none" stroke="#ffffff" stroke-opacity="0.15" stroke-width="2" />
-
-    <!-- Sol Üst Rozet: Kum Saati + "TARİHTEN BİR NOT" -->
-    <g transform="translate(60, 60)">
-      <g fill="#38b2ac" transform="scale(1.5)">
-         <path d="M6 2v6l4 4-4 4v6h12v-6l-4-4 4-4V2H6zm10 14.5V20H8v-3.5l4-4 4 4zm-4-5l-4-4V4h8v3.5l-4 4z"/>
-      </g>
-      <text x="50" y="15" class="small-bold">TARİHTEN</text>
-      <text x="50" y="35" class="small-bold">BİR NOT</text>
-    </g>
-
-    <!-- "Biliyor muydunuz?" El Yazısı Başlığı -->
-    <text x="70" y="210" class="cursive-text" filter="url(#softShadow)">Biliyor muydunuz?</text>
-    <line x1="70" y1="240" x2="260" y2="240" stroke="#38b2ac" stroke-width="4" stroke-linecap="round"/>
-
-    <!-- Dinamik Büyük Başlık -->
-    <text class="title-text" filter="url(#softShadow)">
-      ${titleSvg}
-    </text>
-
-    <!-- Dinamik Gövde ve Sol Çizgi -->
-    <g>
-      <line x1="70" y1="${bodyStartY - 20}" x2="70" y2="${bodyEndY + 10}" stroke="#38b2ac" stroke-width="5" stroke-linecap="square"/>
-      <text class="body-text" filter="url(#softShadow)">
-        ${bodySvg}
+    <!-- Sol Üst: Instagram Rozeti (@biliyormuydunuz) -->
+    <g transform="translate(60, 65)">
+      <!-- Instagram İkon Çerçevesi -->
+      <rect x="0" y="0" width="44" height="44" rx="12" fill="none" stroke="#ffffff" stroke-width="3" />
+      <circle cx="22" cy="22" r="10" fill="none" stroke="#ffffff" stroke-width="3" />
+      <circle cx="32" cy="12" r="2.5" fill="#ffffff" />
+      
+      <text x="56" y="30" class="watermark-text" filter="url(#softShadow)">
+        ${escapeXml(WATERMARK)}
       </text>
     </g>
 
-    <!-- Sol Alt: Kaydet Rozeti -->
-    <g transform="translate(60, ${height - 110})">
-      <g stroke="#38b2ac" stroke-width="2" fill="none" transform="scale(1.5)">
-        <path d="M17 3H7c-1.1 0-1.99.9-1.99 2L5 21l7-3 7 3V5c0-1.1-.9-2-2-2z"/>
-      </g>
-      <text x="50" y="15" class="small-bold" fill="#a0aec0">DAHA FAZLASI İÇİN</text>
-      <text x="50" y="35" class="small-bold" fill="#38b2ac">KAYDET</text>
-    </g>
+    <!-- BİLİYOR MUYDUNUZ? Başlığı -->
+    <text x="540" y="${titleY}" text-anchor="middle" class="header-title" filter="url(#softShadow)">
+      BİLİYOR MUYDUNUZ?
+    </text>
 
-    <!-- Sağ Alt: Etkileşim İkonları & Slogan -->
-    <g transform="translate(${width - 250}, ${height - 100})">
-      <g stroke="#ffffff" fill="none" stroke-width="1.5" transform="scale(0.8)">
-        <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
-        <path d="M30 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L12 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" transform="translate(18, 0)"/>
-        <path d="M17 3H7c-1.1 0-1.99.9-1.99 2L5 21l7-3 7 3V5c0-1.1-.9-2-2-2z" transform="translate(48, 0)"/>
+    <!-- İnce Sarı Ayırıcı Çizgi -->
+    <line x1="490" y1="${lineY}" x2="590" y2="${lineY}" stroke="#f59e0b" stroke-width="3.5" stroke-linecap="round" />
+
+    <!-- Gövde Metni (Bebas Neue Fontuyla Ortalanmış) -->
+    <text text-anchor="middle" class="main-text" filter="url(#softShadow)">
+      ${tspanLines}
+    </text>
+
+    <!-- Alt Kısım: Minimalist İkonlar (Kaydet, Beğen, Yorum, Paylaş) -->
+    <g transform="translate(340, ${height - 65})">
+      <!-- 1. Kaydet (Bookmark) -->
+      <g stroke="#ffffff" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="translate(0, 0) scale(1.1)">
+        <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
       </g>
-      <text x="180" y="55" text-anchor="end" class="small-bold">TARİHİ KEŞFET, <tspan fill="#38b2ac">GELECEĞİ ANLA.</tspan></text>
+
+      <!-- 2. Kalp (Like) -->
+      <g stroke="#ffffff" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="translate(120, 0) scale(1.1)">
+        <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+      </g>
+
+      <!-- 3. Yorum (Comment) -->
+      <g stroke="#ffffff" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="translate(240, 0) scale(1.1)">
+        <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+      </g>
+
+      <!-- 4. Paylaş (Share / Uçak) -->
+      <g stroke="#ffffff" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="translate(360, 0) scale(1.1)">
+        <line x1="22" y1="2" x2="11" y2="13"/>
+        <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+      </g>
     </g>
 
   </svg>
