@@ -8,4 +8,4 @@ crons = ["0 7,12,17 * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "instagram_biliyor_muydunuz_db"
-database_id = "BURAYA_D1_DATABASE_ID_YAZIN"
+database_id = "0d5dffa3-eae2-4b95-b4b2-e358bc0a9bf1"
