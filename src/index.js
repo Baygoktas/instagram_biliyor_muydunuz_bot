@@ -37,7 +37,7 @@ export default {
       await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
 
       const result = await generateAndSendPost(env, MY_CHAT_ID, url.origin);
-      return new Response(`Webhook Bağlandı ve Mesaj Gönderildi!\n\n${result}`, {
+      return new Response(`Webhook Aktif!\n\n${result}`, {
         headers: { "Content-Type": "text/plain; charset=utf-8" }
       });
     } catch (err) {
@@ -50,107 +50,85 @@ export default {
 };
 
 const WIKI_HEADERS = {
-  "User-Agent": "WikipediaInstagramBot/12.0 (contact: telegramherokuhesabi3@gmail.com)",
+  "User-Agent": "WikipediaInstagramBot/13.0 (contact: telegramherokuhesabi3@gmail.com)",
   "Accept": "application/json"
 };
 
 async function generateAndSendPost(env, chatId, origin) {
-  // Rastgele bir yıl ve hafta arşivi çek (2012 - 2024 arası)
+  // 2012 - 2024 yılları arasından rastgele bir yıl seç
   const randomYil = Math.floor(Math.random() * (2024 - 2012 + 1)) + 2012;
-  const randomHafta = Math.floor(Math.random() * 50) + 1;
-  
-  // Olası arşiv şablon başlıkları
-  const titlesToTry = [
-    `Vikipedi:Biliyor muydunuz/Arşiv/${randomYil}`,
-    `Vikipedi:Biliyor muydunuz/${randomYil}/Hafta ${randomHafta}`,
-    `Vikipedi:Biliyor muydunuz/${randomYil}`
-  ];
+  const pageTitle = `Vikipedi:Biliyor muydunuz/Arşiv/${randomYil}`;
 
   let selectedFact = null;
 
-  for (const pageTitle of titlesToTry) {
-    try {
-      const parseUrl = new URL("https://tr.wikipedia.org/w/api.php");
-      parseUrl.search = new URLSearchParams({
-        action: "parse",
-        page: pageTitle,
-        format: "json",
-        formatversion: "2",
-        prop: "wikitext",
-        redirects: "1"
-      });
-
-      const res = await fetch(parseUrl, { headers: WIKI_HEADERS });
-      const data = await res.json();
-      const wikitext = data?.parse?.wikitext || "";
-
-      if (wikitext) {
-        const lines = wikitext.split("\n").filter(l => l.trim().startsWith("*") || l.trim().startsWith(";"));
-        const shuffledLines = lines.sort(() => 0.5 - Math.random());
-
-        for (const line of shuffledLines) {
-          const imgMatch = line.match(/\[\[(?:Dosya|Resim|File|Image):([^|\]\n]+)/i);
-          if (imgMatch && imgMatch[1]) {
-            const fileName = imgMatch[1].trim();
-            const imgUrl = await fetchWikipediaImageUrl(fileName);
-            if (imgUrl) {
-              const cleanText = temizleWikitext(line);
-              if (cleanText.length > 25 && cleanText.length < 400) {
-                selectedFact = {
-                  title: pageTitle,
-                  text: cleanText,
-                  imageUrl: imgUrl
-                };
-                break;
-              }
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.error(e);
-    }
-    if (selectedFact) break;
-  }
-
-  // Bulunamazsa güncel ana sayfadan çek
-  if (!selectedFact) {
+  try {
     const parseUrl = new URL("https://tr.wikipedia.org/w/api.php");
     parseUrl.search = new URLSearchParams({
       action: "parse",
-      page: "Vikipedi:Biliyor muydunuz",
+      page: pageTitle,
       format: "json",
       formatversion: "2",
       prop: "wikitext",
       redirects: "1"
     });
+
     const res = await fetch(parseUrl, { headers: WIKI_HEADERS });
     const data = await res.json();
     const wikitext = data?.parse?.wikitext || "";
 
-    const lines = wikitext.split("\n").filter(l => l.trim().startsWith("*"));
-    for (const line of lines) {
-      const imgMatch = line.match(/\[\[(?:Dosya|Resim|File|Image):([^|\]\n]+)/i);
-      if (imgMatch && imgMatch[1]) {
-        const fileName = imgMatch[1].trim();
-        const imgUrl = await fetchWikipediaImageUrl(fileName);
-        if (imgUrl) {
-          selectedFact = {
-            title: "Vikipedi:Biliyor muydunuz",
-            text: temizleWikitext(line),
-            imageUrl: imgUrl
-          };
-          break;
+    if (wikitext) {
+      // Satırları ayır ve karıştır
+      const rawLines = wikitext.split("\n");
+      const validItems = [];
+
+      for (let i = 0; i < rawLines.length; i++) {
+        const line = rawLines[i].trim();
+        // Madde işaretiyle başlayan veya görsel içeren satırları topla
+        if (line.startsWith("*") || line.startsWith("...") || line.includes("[[Dosya:") || line.includes("[[File:")) {
+          // Görseli ara
+          const imgMatch = line.match(/\[\[(?:Dosya|Resim|File|Media):([^|\]\n]+)/i);
+          if (imgMatch && imgMatch[1]) {
+            const fileName = imgMatch[1].trim();
+            const textClean = temizleWikitext(line);
+
+            // Kural/yönerge olmayan gerçek bilgi cümleleri
+            if (
+              textClean.length > 35 &&
+              !textClean.toLowerCase().includes("standart resim") &&
+              !textClean.toLowerCase().includes("madde önerileri") &&
+              !textClean.toLowerCase().includes("arşiv")
+            ) {
+              validItems.push({ fileName, text: textClean });
+            }
+          }
+        }
+      }
+
+      if (validItems.length > 0) {
+        const shuffled = validItems.sort(() => 0.5 - Math.random());
+        for (const item of shuffled) {
+          const imgUrl = await fetchWikipediaImageUrl(item.fileName);
+          if (imgUrl) {
+            selectedFact = {
+              title: pageTitle,
+              text: item.text,
+              imageUrl: imgUrl
+            };
+            break;
+          }
         }
       }
     }
+  } catch (e) {
+    console.error(e);
   }
 
+  // Havuzdan bulunamazsa kaliteli yedek içerik
   if (!selectedFact) {
     selectedFact = {
       title: "Vikipedi:Biliyor muydunuz",
-      text: "İlk Türkçe gazete olan Takvim-i Vekayi, 1831 yılında Osmanlı İmparatorluğu'nda yayımlanmaya başlamıştır.",
-      imageUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/6/65/Takvim-i_Vekayi.jpg/1024px-Takvim-i_Vekayi.jpg"
+      text: "Galata Kulesi, 528 yılında Bizans İmparatoru Anastasius tarafından fener kulesi olarak inşa ettirilmiştir.",
+      imageUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Galata_Tower_Istanbul.jpg/1200px-Galata_Tower_Istanbul.jpg"
     };
   }
 
@@ -214,7 +192,7 @@ function handleImageGeneration(url) {
   const width = 1080;
   const height = ratio === "portrait" ? 1350 : 1080;
 
-  const maxLineChars = ratio === "portrait" ? 30 : 34;
+  const maxLineChars = ratio === "portrait" ? 28 : 32;
   const words = text.split(" ");
   const lines = [];
   let cur = "";
@@ -229,10 +207,10 @@ function handleImageGeneration(url) {
   }
   if (cur) lines.push(cur.trim());
 
-  const lineHeight = 54;
+  const lineHeight = 52;
   const totalTextHeight = lines.length * lineHeight;
   
-  const bottomMargin = ratio === "portrait" ? 160 : 130;
+  const bottomMargin = ratio === "portrait" ? 150 : 120;
   const startY = height - bottomMargin - totalTextHeight;
   const badgeY = startY - 70;
 
@@ -245,8 +223,8 @@ function handleImageGeneration(url) {
     <defs>
       <linearGradient id="bottomGrad" x1="0%" y1="0%" x2="0%" y2="100%">
         <stop offset="0%" stop-color="#000000" stop-opacity="0.05" />
-        <stop offset="40%" stop-color="#000000" stop-opacity="0.25" />
-        <stop offset="65%" stop-color="#000000" stop-opacity="0.80" />
+        <stop offset="35%" stop-color="#000000" stop-opacity="0.30" />
+        <stop offset="65%" stop-color="#000000" stop-opacity="0.82" />
         <stop offset="100%" stop-color="#000000" stop-opacity="0.96" />
       </linearGradient>
 
@@ -259,7 +237,7 @@ function handleImageGeneration(url) {
     ${bgImg ? `<image href="${escapeXml(bgImg)}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" opacity="0.90" />` : ""}
     <rect width="${width}" height="${height}" fill="url(#bottomGrad)" />
 
-    <!-- Sol Üst Filigran -->
+    <!-- Sol Üst Filigran Rozeti -->
     <g transform="translate(60, 80)">
       <rect x="0" y="0" width="${watermark.length * 16 + 40}" height="46" rx="23" fill="#000000" fill-opacity="0.55" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5" />
       <circle cx="23" cy="23" r="6" fill="#f59e0b" />
@@ -277,7 +255,7 @@ function handleImageGeneration(url) {
     </g>
 
     <!-- Bilgi Metni -->
-    <text text-anchor="middle" fill="#ffffff" font-family="'Inter', -apple-system, BlinkMacSystemFont, 'Montserrat', 'Helvetica Neue', sans-serif" font-size="38" font-weight="700" letter-spacing="0.2" filter="url(#softShadow)">
+    <text text-anchor="middle" fill="#ffffff" font-family="'Inter', -apple-system, BlinkMacSystemFont, 'Montserrat', 'Helvetica Neue', sans-serif" font-size="36" font-weight="700" letter-spacing="0.2" filter="url(#softShadow)">
       ${tspanLines}
     </text>
 
@@ -344,7 +322,7 @@ function temizleWikitext(s) {
     .replace(/\[https?:\/\/[^\s\]]+\s+([^\]]+)\]/g, "$1")
     .replace(/'{2,3}/g, "")
     .replace(/\b\d{2,4}x\d{2,4}px\b/gi, " ")
-    .replace(/^[;*]\s*/, "")
+    .replace(/^[;*.]+\s*/, "")
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
     .replace(/&quot;/gi, '"')
