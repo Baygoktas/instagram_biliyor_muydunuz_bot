@@ -1,37 +1,64 @@
+const TELEGRAM_BOT_TOKEN = "7498614075:AAHepFlPgEvvohNwg-BWUrgAW1OrbxEUXeo";
+const AUTHORIZED_CHAT_ID = "1283445630"; // Sadece sizin ID'niz
+const WATERMARK = "@Tarihtebugun";
+
 export default {
-  async scheduled(event, env, ctx) {
-    ctx.waitUntil(runInstagramBot(env));
-  },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    if (url.pathname === "/favicon.ico") {
-      return new Response(null, { status: 204 });
-    }
+    if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
 
+    // 1. Instagram Görselini Üreten Endpoint
     if (url.pathname === "/image") {
       return handleImageGeneration(url);
     }
 
+    // 2. Webhook Kurulumu İçin (/set-webhook)
+    if (url.pathname === "/set-webhook") {
+      const webhookUrl = `${url.origin}/webhook`;
+      const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
+      const data = await res.json();
+      return new Response(JSON.stringify(data, null, 2), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // 3. Telegram Webhook Gelen Mesaj İşleyici
+    if (url.pathname === "/webhook" && request.method === "POST") {
+      try {
+        const update = await request.json();
+        if (update.message && update.message.text) {
+          const chatId = String(update.message.chat.id);
+          const text = update.message.text.trim();
+
+          // Sadece sizin yetkili ID'nizden gelen komutları dinler
+          if (chatId === String(AUTHORIZED_CHAT_ID)) {
+            if (text === "/hazirla" || text === "/start" || text === "hazırla" || text === "Hazırla") {
+              ctx.waitUntil(generateAndSendPost(env, chatId, url.origin));
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Webhook parse hatası:", err);
+      }
+      return new Response("OK", { status: 200 });
+    }
+
+    // Tarayıcıdan manuel tetikleme
     try {
-      const result = await runInstagramBot(env, url.origin);
-      return new Response(result || "İşlem başarıyla tamamlandı.🧿", {
-        status: 200,
+      const result = await generateAndSendPost(env, AUTHORIZED_CHAT_ID, url.origin);
+      return new Response(result || "İşlem tamamlandı.", {
         headers: { "Content-Type": "text/plain; charset=utf-8" }
       });
     } catch (err) {
-      console.error(err);
-      return new Response(`Hata Detayı:\n${err.message}\n\nStack:\n${err.stack}`, {
-        status: 500,
-        headers: { "Content-Type": "text/plain; charset=utf-8" }
-      });
+      return new Response(`Hata:\n${err.message}`, { status: 500 });
     }
   }
 };
 
 const WIKI_HEADERS = {
-  "User-Agent": "WikipediaInstagramBot/2.0 (contact: telegramherokuhesabi3@gmail.com)",
-  "Api-User-Agent": "WikipediaInstagramBot/2.0 (contact: telegramherokuhesabi3@gmail.com)",
+  "User-Agent": "WikipediaInstagramBot/3.0 (contact: telegramherokuhesabi3@gmail.com)",
+  "Api-User-Agent": "WikipediaInstagramBot/3.0 (contact: telegramherokuhesabi3@gmail.com)",
   "Accept": "application/json"
 };
 
@@ -44,20 +71,8 @@ async function fetchWithRetry(url, options = {}, retries = 2) {
   return fetch(url, options);
 }
 
-async function runInstagramBot(env, origin = "") {
-  const TELEGRAM_BOT_TOKEN = env.TELEGRAM_BOT_TOKEN || "7498614075:AAHepFlPgEvvohNwg-BWUrgAW1OrbxEUXeo";
-  const TELEGRAM_CHAT_ID = env.TELEGRAM_CHAT_ID || "1283445630";
-  const WATERMARK = env.CHANNEL_WATERMARK || "@Tarihtebugun";
-
-  if (!TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN.includes("BURAYA_BOT")) {
-    throw new Error("TELEGRAM_BOT_TOKEN tanımlanmadı!");
-  }
-  if (!TELEGRAM_CHAT_ID || TELEGRAM_CHAT_ID.includes("BURAYA_OZEL")) {
-    throw new Error("TELEGRAM_CHAT_ID tanımlanmadı!");
-  }
-
-  const now = new Date();
-  const cutoff = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+async function generateAndSendPost(env, chatId, origin) {
+  const cutoff = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
   const start = new Date("2010-01-01T00:00:00Z");
 
   const randomMs = Math.floor(Math.random() * (cutoff.getTime() - start.getTime()));
@@ -89,7 +104,7 @@ async function runInstagramBot(env, origin = "") {
     .filter(Boolean)
     .filter(x => new Date(x.date).getTime() < cutoff.getTime());
 
-  if (!candidates.length) return "Aday arşiv sayfası bulunamadı.";
+  if (!candidates.length) return "Aday sayfa bulunamadı.";
 
   const shuffled = candidates.sort(() => 0.5 - Math.random());
   let selected = null;
@@ -131,22 +146,43 @@ async function runInstagramBot(env, origin = "") {
   }
 
   if (!selected || !imageUrl) {
-    return "Görselli yeni bir arşiv maddesi bulunamadı, bir sonraki çalışmada tekrar denenecek.";
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: "⚠️ Görselli yeni bir içerik bulunamadı. Lütfen tekrar /hazirla yazın."
+      })
+    });
+    return "Görselli içerik bulunamadı.";
   }
 
   let cleanText = temizleWikitext(rawWikitext);
   cleanText = cleanText.replace(/^(?:Vikipedi|Biliyor muydu(?:nuz)?\??|Arşiv|Ana sayfa)[^.!?]*[.!?]?\s*/i, "").trim();
 
-  if (!cleanText || cleanText.length < 20) return "Metin yetersiz.";
-
   const encodedTitle = encodeURIComponent(selected.title.replace(/ /g, "_"));
   const dynamicSourceUrl = `https://tr.wikipedia.org/wiki/${encodedTitle}`;
 
-  const messageText =
-    `📸 <b>INSTAGRAM İÇİN HAZIR GÖRSEL TASLAĞI</b>\n\n` +
-    `💡 <b>Metin:</b>\n${escapeHtml(cleanText)}\n\n` +
-    `🔎 <b>Kaynak:</b> <a href="${dynamicSourceUrl}">Vikipedi</a>\n\n` +
-    `👇 <i>Aşağıdaki butonlardan formatı seçip görseli indirebilirsiniz:</i>`;
+  // Instagram Açıklama Taslağı
+  const instagramCaption = 
+`💡 Bunu biliyor muydunuz?
+
+${cleanText}
+
+📌 Daha fazla ilginç ve tarihi bilgi için takipte kalın!
+.
+.
+#tarih #tarihtebugun #bunubiliyormuydunuz #bilgi #genelkültür #tarihieser #tariharsivi`;
+
+  const telegramMessage =
+`✨ <b>YENİ İNSTAGRAM İÇERİĞİNİZ HAZIR!</b>
+
+📝 <b>Instagram Açıklaması:</b>
+<code>${escapeHtml(instagramCaption)}</code>
+
+🔗 <b>Kaynak:</b> <a href="${dynamicSourceUrl}">Vikipedi</a>
+
+👇 <i>Aşağıdan görsel formatını seçip indirin:</i>`;
 
   const squareParams = new URLSearchParams({ text: cleanText, img: imageUrl, wm: WATERMARK, ratio: "square" });
   const portraitParams = new URLSearchParams({ text: cleanText, img: imageUrl, wm: WATERMARK, ratio: "portrait" });
@@ -160,43 +196,18 @@ async function runInstagramBot(env, origin = "") {
     ]
   };
 
-  let sentSuccessfully = false;
-
-  // 1. Önce Fotoğraflı Gönderim Dene
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: TELEGRAM_CHAT_ID,
-        photo: imageUrl,
-        caption: messageText,
-        parse_mode: "HTML",
-        reply_markup: replyMarkup
-      })
-    });
-    const photoData = await res.json();
-    if (photoData.ok) sentSuccessfully = true;
-  } catch (e) {
-    console.error("Fotoğraf gönderiminde hata:", e);
-  }
-
-  // 2. Telegram URL çekme hatası verirse butonları ve linkleri metin mesajıyla ilet
-  if (!sentSuccessfully) {
-    const resMsg = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: TELEGRAM_CHAT_ID,
-        text: messageText,
-        parse_mode: "HTML",
-        reply_markup: replyMarkup,
-        disable_web_page_preview: false
-      })
-    });
-    const msgData = await resMsg.json();
-    if (!msgData.ok) throw new Error(`Telegram Hatası: ${msgData.description}`);
-  }
+  // Telegram'a gönder
+  await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      photo: imageUrl,
+      caption: telegramMessage,
+      parse_mode: "HTML",
+      reply_markup: replyMarkup
+    })
+  });
 
   if (env.DB) {
     const factHash = simpleHash(cleanText);
@@ -205,10 +216,10 @@ async function runInstagramBot(env, origin = "") {
       .run();
   }
 
-  return `Başarılı! Özel sohbetinize taslak gönderildi: ${selected.title}`;
+  return `Başarılı! Gönderildi: ${selected.title}`;
 }
 
-// Görsel Render Motoru
+// Görsel Render Motoru (Gelişmiş Instagram SVG Tasarımı)
 function handleImageGeneration(url) {
   const text = url.searchParams.get("text") || "Bunu biliyor muydunuz?";
   const bgImg = url.searchParams.get("img") || "";
@@ -287,7 +298,7 @@ function handleImageGeneration(url) {
       ${tspanLines}
     </text>
 
-    <!-- Alt Çizgi -->
+    <!-- Alt İnce Çizgi -->
     <line x1="440" y1="${height - 50}" x2="640" y2="${height - 50}" stroke="#f59e0b" stroke-width="4" stroke-linecap="round" opacity="0.8" />
   </svg>
   `;
@@ -312,9 +323,7 @@ function escapeXml(s) {
 async function fetchWikipediaImageUrl(fileName) {
   try {
     const ext = fileName.split(".").pop().toLowerCase();
-    if (["svg", "tif", "tiff", "ogg", "ogv", "pdf"].includes(ext)) {
-      return null;
-    }
+    if (["svg", "tif", "tiff", "ogg", "ogv", "pdf"].includes(ext)) return null;
 
     const imgApiUrl = new URL("https://tr.wikipedia.org/w/api.php");
     imgApiUrl.search = new URLSearchParams({
