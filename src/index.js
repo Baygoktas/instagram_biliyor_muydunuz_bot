@@ -15,7 +15,7 @@ export default {
 
     try {
       const result = await runInstagramBot(env, url.origin);
-      return new Response(result || "İşlem başarıyla tamamlandı.", {
+      return new Response(result || "İşlem başarıyla tamamlandı.🧿", {
         status: 200,
         headers: { "Content-Type": "text/plain; charset=utf-8" }
       });
