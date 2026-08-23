@@ -1,5 +1,5 @@
 const TELEGRAM_BOT_TOKEN = "7498614075:AAHepFlPgEvvohNwg-BWUrgAW1OrbxEUXeo";
-const AUTHORIZED_CHAT_ID = "1283445630"; // Sadece sizin ID'niz
+const AUTHORIZED_CHAT_ID = "1283445630";
 const WATERMARK = "@Tarihtebugun";
 
 export default {
@@ -8,12 +8,12 @@ export default {
 
     if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
 
-    // 1. Instagram Görselini Üreten Endpoint
+    // 1. Instagram Görsellerini Üreten Endpoint
     if (url.pathname === "/image") {
       return handleImageGeneration(url);
     }
 
-    // 2. Webhook Kurulumu İçin (/set-webhook)
+    // 2. Webhook Kurulumu (/set-webhook)
     if (url.pathname === "/set-webhook") {
       const webhookUrl = `${url.origin}/webhook`;
       const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
@@ -23,7 +23,7 @@ export default {
       });
     }
 
-    // 3. Telegram Webhook Gelen Mesaj İşleyici
+    // 3. Telegram Webhook Gelen Komut İşleyici
     if (url.pathname === "/webhook" && request.method === "POST") {
       try {
         const update = await request.json();
@@ -31,9 +31,8 @@ export default {
           const chatId = String(update.message.chat.id);
           const text = update.message.text.trim();
 
-          // Sadece sizin yetkili ID'nizden gelen komutları dinler
           if (chatId === String(AUTHORIZED_CHAT_ID)) {
-            if (text === "/hazirla" || text === "/start" || text === "hazırla" || text === "Hazırla") {
+            if (text === "/hazirla" || text === "/start" || text.toLowerCase() === "hazırla" || text.toLowerCase() === "hazirla") {
               ctx.waitUntil(generateAndSendPost(env, chatId, url.origin));
             }
           }
@@ -160,9 +159,6 @@ async function generateAndSendPost(env, chatId, origin) {
   let cleanText = temizleWikitext(rawWikitext);
   cleanText = cleanText.replace(/^(?:Vikipedi|Biliyor muydu(?:nuz)?\??|Arşiv|Ana sayfa)[^.!?]*[.!?]?\s*/i, "").trim();
 
-  const encodedTitle = encodeURIComponent(selected.title.replace(/ /g, "_"));
-  const dynamicSourceUrl = `https://tr.wikipedia.org/wiki/${encodedTitle}`;
-
   // Instagram Açıklama Taslağı
   const instagramCaption = 
 `💡 Bunu biliyor muydunuz?
@@ -174,40 +170,64 @@ ${cleanText}
 .
 #tarih #tarihtebugun #bunubiliyormuydunuz #bilgi #genelkültür #tarihieser #tariharsivi`;
 
-  const telegramMessage =
+  const telegramCaptionText =
 `✨ <b>YENİ İNSTAGRAM İÇERİĞİNİZ HAZIR!</b>
 
-📝 <b>Instagram Açıklaması:</b>
-<code>${escapeHtml(instagramCaption)}</code>
+📝 <b>Instagram Açıklaması (Kopyalamak için tıklayın):</b>
+<code>${escapeHtml(instagramCaption)}</code>`;
 
-🔗 <b>Kaynak:</b> <a href="${dynamicSourceUrl}">Vikipedi</a>
+  const squareUrl = `${origin}/image?text=${encodeURIComponent(cleanText)}&img=${encodeURIComponent(imageUrl)}&wm=${encodeURIComponent(WATERMARK)}&ratio=square`;
+  const portraitUrl = `${origin}/image?text=${encodeURIComponent(cleanText)}&img=${encodeURIComponent(imageUrl)}&wm=${encodeURIComponent(WATERMARK)}&ratio=portrait`;
 
-👇 <i>Aşağıdan görsel formatını seçip indirin:</i>`;
-
-  const squareParams = new URLSearchParams({ text: cleanText, img: imageUrl, wm: WATERMARK, ratio: "square" });
-  const portraitParams = new URLSearchParams({ text: cleanText, img: imageUrl, wm: WATERMARK, ratio: "portrait" });
-
-  const replyMarkup = {
-    inline_keyboard: [
-      [
-        { text: "📥 Instagram Kare (1:1)", url: `${origin}/image?${squareParams.toString()}` },
-        { text: "📥 Instagram Portre (4:5)", url: `${origin}/image?${portraitParams.toString()}` }
-      ]
+  // 2 Hazırlanmış Görseli Albüm Olarak Gönder (sendMediaGroup)
+  const mediaGroupPayload = {
+    chat_id: chatId,
+    media: [
+      {
+        type: "photo",
+        media: squareUrl,
+        caption: telegramCaptionText,
+        parse_mode: "HTML"
+      },
+      {
+        type: "photo",
+        media: portraitUrl
+      }
     ]
   };
 
-  // Telegram'a gönder
-  await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+  const albumRes = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMediaGroup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      photo: imageUrl,
-      caption: telegramMessage,
-      parse_mode: "HTML",
-      reply_markup: replyMarkup
-    })
+    body: JSON.stringify(mediaGroupPayload)
   });
+
+  const albumData = await albumRes.json();
+
+  // Telegram uzaktan SVG URL'i kabul etmezse doğrudan 2 ayrı fotoğraflı/dökümanlı mesaj olarak ilet
+  if (!albumData.ok) {
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        document: squareUrl,
+        caption: "🖼 <b>Instagram Kare Formatı (1:1)</b>\n\n" + telegramCaptionText,
+        parse_mode: "HTML"
+      })
+    });
+
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        document: portraitUrl,
+        caption: "🖼 <b>Instagram Portre Formatı (4:5)</b>",
+        parse_mode: "HTML"
+      })
+    });
+  }
 
   if (env.DB) {
     const factHash = simpleHash(cleanText);
@@ -219,7 +239,7 @@ ${cleanText}
   return `Başarılı! Gönderildi: ${selected.title}`;
 }
 
-// Görsel Render Motoru (Gelişmiş Instagram SVG Tasarımı)
+// Görsel Render Motoru (SVG Tasarımı)
 function handleImageGeneration(url) {
   const text = url.searchParams.get("text") || "Bunu biliyor muydunuz?";
   const bgImg = url.searchParams.get("img") || "";
@@ -298,7 +318,7 @@ function handleImageGeneration(url) {
       ${tspanLines}
     </text>
 
-    <!-- Alt İnce Çizgi -->
+    <!-- Alt Çizgi -->
     <line x1="440" y1="${height - 50}" x2="640" y2="${height - 50}" stroke="#f59e0b" stroke-width="4" stroke-linecap="round" opacity="0.8" />
   </svg>
   `;
@@ -385,4 +405,4 @@ function simpleHash(str) {
     hash |= 0;
   }
   return String(hash);
-}
+      }
