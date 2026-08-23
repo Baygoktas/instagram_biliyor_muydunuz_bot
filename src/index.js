@@ -45,8 +45,8 @@ async function fetchWithRetry(url, options = {}, retries = 2) {
 }
 
 async function runInstagramBot(env, origin = "") {
-  const TELEGRAM_BOT_TOKEN = env.TELEGRAM_BOT_TOKEN || "BURAYA_BOT_TOKENINIZ";
-  const TELEGRAM_CHAT_ID = env.TELEGRAM_CHAT_ID || "BURAYA_OZEL_TELEGRAM_CHAT_ID";
+  const TELEGRAM_BOT_TOKEN = env.TELEGRAM_BOT_TOKEN || "7498614075:AAHepFlPgEvvohNwg-BWUrgAW1OrbxEUXeo";
+  const TELEGRAM_CHAT_ID = env.TELEGRAM_CHAT_ID || "1283445630";
   const WATERMARK = env.CHANNEL_WATERMARK || "@Tarihtebugun";
 
   if (!TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN.includes("BURAYA_BOT")) {
