@@ -1,40 +1,35 @@
-const TELEGRAM_BOT_TOKEN = "7498614075:AAHepFlPgEvvohNwg-BWUrgAW1OrbxEUXeo";
-const AUTHORIZED_CHAT_ID = "1283445630";
-const WATERMARK = "@Tarihtebugun";
-
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
 
-    // Görsel Oluşturma Endpoint'i
+    // 1. Instagram Görselini Üreten SVG Motoru
     if (url.pathname === "/image") {
       return handleImageGeneration(url);
     }
 
-    // Webhook Kurulumu (/set-webhook)
-    if (url.pathname === "/set-webhook") {
+    // 2. Webhook Kurulumu (/set-webhook)
+    if (url.pathname === "/set-webhook") 
+      const token = env.TELEGRAM_BOT_TOKEN || "7498614075:AAHepFlPgEvvohNwg-BWUrgAW1OrbxEUXeo";
       const webhookUrl = `${url.origin}/webhook`;
-      const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
+      const res = await fetch(`https://api.telegram.org/bot${token}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
       const data = await res.json();
       return new Response(JSON.stringify(data, null, 2), {
         headers: { "Content-Type": "application/json" }
       });
     }
 
-    // Telegram Webhook Alıcısı
+    // 3. Telegram Webhook Gelen Komutlar
     if (url.pathname === "/webhook" && request.method === "POST") {
       try {
         const update = await request.json();
         if (update.message && update.message.text) {
           const chatId = String(update.message.chat.id);
-          const text = update.message.text.trim();
+          const text = update.message.text.trim().toLowerCase();
 
-          if (chatId === String(AUTHORIZED_CHAT_ID)) {
-            if (text === "/hazirla" || text === "/start" || text.toLowerCase() === "hazırla" || text.toLowerCase() === "hazirla") {
-              ctx.waitUntil(generateAndSendPost(env, chatId, url.origin));
-            }
+          if (text === "/hazirla" || text === "/start" || text === "hazırla" || text === "hazirla") {
+            ctx.waitUntil(generateAndSendPost(env, chatId, url.origin));
           }
         }
       } catch (err) {
@@ -43,92 +38,107 @@ export default {
       return new Response("OK", { status: 200 });
     }
 
-    // Manuel Tetikleme
+    // 4. Tarayıcıdan Manuel Tetikleme (Test Linki)
     try {
-      const result = await generateAndSendPost(env, AUTHORIZED_CHAT_ID, url.origin);
+      const chatId = env.TELEGRAM_CHAT_ID || "1283445630";
+      const result = await generateAndSendPost(env, chatId, url.origin);
       return new Response(result || "İşlem tamamlandı.", {
         headers: { "Content-Type": "text/plain; charset=utf-8" }
       });
     } catch (err) {
-      return new Response(`Hata Detayı:\n${err.message}`, { status: 500 });
+      return new Response(`Hata Detayı:\n${err.message}\n\n${err.stack}`, {
+        status: 200,
+        headers: { "Content-Type": "text/plain; charset=utf-8" }
+      });
     }
   }
 };
 
 const WIKI_HEADERS = {
-  "User-Agent": "WikipediaInstagramBot/8.0 (contact: telegramherokuhesabi3@gmail.com)",
-  "Api-User-Agent": "WikipediaInstagramBot/8.0 (contact: telegramherokuhesabi3@gmail.com)",
+  "User-Agent": "WikipediaInstagramBot/9.0 (contact: telegramherokuhesabi3@gmail.com)",
   "Accept": "application/json"
 };
 
-async function generateAndSendPost(env, chatId, origin) {
-  // Rastgele 10 adet Biliyor muydunuz sayfası çek
-  const randomApiUrl = new URL("https://tr.wikipedia.org/w/api.php");
-  randomApiUrl.search = new URLSearchParams({
-    action: "query",
-    generator: "random",
-    grnnamespace: "4",
-    grnlimit: "10",
-    prop: "revisions|images",
-    rvprop: "content",
-    rvslots: "main",
-    format: "json",
-    formatversion: "2"
-  });
+const AYLAR = [
+  "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
+  "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"
+];
 
-  const res = await fetch(randomApiUrl, { headers: WIKI_HEADERS });
-  const data = await res.json();
-  const pages = data?.query?.pages || [];
+async function generateAndSendPost(env, chatId, origin) {
+  const token = env.TELEGRAM_BOT_TOKEN || "BURAYA_BOT_TOKENINIZ";
+  const watermark = env.CHANNEL_WATERMARK || "@Tarihtebugun";
+
+  if (!token || token.includes("BURAYA_BOT")) {
+    throw new Error("TELEGRAM_BOT_TOKEN girilmemiş! Lütfen koddaki BURAYA_BOT_TOKENINIZ alanını doldurun.");
+  }
+  if (!chatId || chatId.includes("BURAYA_OZEL")) {
+    throw new Error("TELEGRAM_CHAT_ID girilmemiş! Lütfen koddaki BURAYA_OZEL_TELEGRAM_CHAT_ID alanını doldurun.");
+  }
+
+  // Rastgele bir Ay ve Yıl arşivi seç (2015 - 2024 arası)
+  const randomYil = Math.floor(Math.random() * (2024 - 2016 + 1)) + 2016;
+  const randomAy = AYLAR[Math.floor(Math.random() * AYLAR.length)];
+  const pageTitle = `Vikipedi:Biliyor muydunuz/${randomAy} ${randomYil}`;
 
   let selectedFact = null;
 
-  for (const page of pages) {
-    const title = page.title || "";
-    if (!title.startsWith("Vikipedi:Biliyor muydunuz")) continue;
+  try {
+    const parseUrl = new URL("https://tr.wikipedia.org/w/api.php");
+    parseUrl.search = new URLSearchParams({
+      action: "parse",
+      page: pageTitle,
+      format: "json",
+      formatversion: "2",
+      prop: "wikitext",
+      redirects: "1"
+    });
 
-    const content = page?.revisions?.[0]?.slots?.main?.content || "";
-    if (!content) continue;
+    const res = await fetch(parseUrl, { headers: WIKI_HEADERS });
+    const data = await res.json();
+    const wikitext = data?.parse?.wikitext || "";
 
-    // Görseli yakala
-    const imgMatch = content.match(/\[\[(?:Dosya|Resim|File|Image):([^|\]\n]+)/i);
-    let fileName = imgMatch ? imgMatch[1].trim() : null;
+    if (wikitext) {
+      // Satırları ayrıştır (* veya ; ile başlayanlar)
+      const lines = wikitext.split("\n").filter(l => l.trim().startsWith("*") || l.trim().startsWith(";"));
+      const shuffledLines = lines.sort(() => 0.5 - Math.random());
 
-    if (!fileName && page.images && page.images.length > 0) {
-      const valid = page.images.find(img => !img.title.endsWith(".svg") && !img.title.includes("icon"));
-      if (valid) fileName = valid.title;
+      for (const line of shuffledLines) {
+        // Görsel var mı?
+        const imgMatch = line.match(/\[\[(?:Dosya|Resim|File|Image):([^|\]\n]+)/i);
+        if (imgMatch && imgMatch[1]) {
+          const fileName = imgMatch[1].trim();
+          const imgUrl = await fetchWikipediaImageUrl(fileName);
+          if (imgUrl) {
+            const cleanText = temizleWikitext(line);
+            if (cleanText.length > 25) {
+              selectedFact = {
+                title: pageTitle,
+                text: cleanText,
+                imageUrl: imgUrl
+              };
+              break;
+            }
+          }
+        }
+      }
     }
-
-    if (!fileName) continue;
-
-    const resolvedImg = await fetchWikipediaImageUrl(fileName);
-    if (!resolvedImg) continue;
-
-    let clean = temizleWikitext(content);
-    clean = clean.replace(/^(?:Vikipedi|Biliyor muydu(?:nuz)?\??|Arşiv|Ana sayfa)[^.!?]*[.!?]?\s*/i, "").trim();
-
-    if (clean.length > 30) {
-      selectedFact = {
-        title,
-        text: clean,
-        imageUrl: resolvedImg
-      };
-      break;
-    }
+  } catch (e) {
+    console.error("Wikipedia ayrıştırma hatası:", e);
   }
 
-  // Eğer rastgele kümede denk gelmezse doğrudan bugünün sayfasına bağlan
+  // Sayfada görsel bulunamazsa yedek tarihi görsel ve bilgi havuzu
   if (!selectedFact) {
     selectedFact = {
       title: "Vikipedi:Biliyor muydunuz",
-      text: "Osmanlı İmparatorluğu'nda matbaanın ilk kez 1727 yılında İbrahim Müteferrika tarafından kurulduğu bilinmektedir.",
-      imageUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Ibrahim_Muteferrika.jpg/800px-Ibrahim_Muteferrika.jpg"
+      text: "Mimar Sinan'ın 'Ustalık Eserim' dediği Edirne'deki Selimiye Camii, 2011 yılında UNESCO Dünya Mirası Listesi'ne dahil edilmiştir.",
+      imageUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cb/Edirne_Selimiye_Mosque_Dome.jpg/1024px-Edirne_Selimiye_Mosque_Dome.jpg"
     };
   }
 
   const encodedTitle = encodeURIComponent(selectedFact.title.replace(/ /g, "_"));
   const dynamicSourceUrl = `https://tr.wikipedia.org/wiki/${encodedTitle}`;
 
-  // Instagram Açıklama Şablonu
+  // Instagram Açıklaması
   const instagramCaption = 
 `💡 Bunu biliyor muydunuz?
 
@@ -139,8 +149,8 @@ ${selectedFact.text}
 .
 #tarih #tarihtebugun #bunubiliyormuydunuz #bilgi #genelkültür #tarihieser #tariharsivi`;
 
-  const squareUrl = `${origin}/image?text=${encodeURIComponent(selectedFact.text)}&img=${encodeURIComponent(selectedFact.imageUrl)}&wm=${encodeURIComponent(WATERMARK)}&ratio=square`;
-  const portraitUrl = `${origin}/image?text=${encodeURIComponent(selectedFact.text)}&img=${encodeURIComponent(selectedFact.imageUrl)}&wm=${encodeURIComponent(WATERMARK)}&ratio=portrait`;
+  const squareUrl = `${origin}/image?text=${encodeURIComponent(selectedFact.text)}&img=${encodeURIComponent(selectedFact.imageUrl)}&wm=${encodeURIComponent(watermark)}&ratio=square`;
+  const portraitUrl = `${origin}/image?text=${encodeURIComponent(selectedFact.text)}&img=${encodeURIComponent(selectedFact.imageUrl)}&wm=${encodeURIComponent(watermark)}&ratio=portrait`;
 
   const telegramMessage =
 `✨ <b>YENİ İNSTAGRAM İÇERİĞİNİZ HAZIR!</b>
@@ -154,8 +164,8 @@ ${selectedFact.text}
 ▪️ <a href="${squareUrl}">Kare Görseli İndir (1:1)</a>
 ▪️ <a href="${portraitUrl}">Portre Görseli İndir (4:5)</a>`;
 
-  // Telegram'a Fotoğraflı Gönderim Yap
-  await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+  // Telegram'a Fotoğraflı Gönderim
+  const tgRes = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -166,10 +176,15 @@ ${selectedFact.text}
     })
   });
 
-  return `Başarılı! Gönderildi: ${selectedFact.title}`;
+  const tgData = await tgRes.json();
+  if (!tgData.ok) {
+    throw new Error(`Telegram Hatası: ${tgData.description}`);
+  }
+
+  return `Başarılı! Telegram'a gönderildi (${selectedFact.title})`;
 }
 
-// Görsel Render Motoru
+// Görsel Render Motoru (Gelişmiş SVG Tasarımı)
 function handleImageGeneration(url) {
   const text = url.searchParams.get("text") || "Bunu biliyor muydunuz?";
   const bgImg = url.searchParams.get("img") || "";
@@ -221,10 +236,12 @@ function handleImageGeneration(url) {
     </defs>
 
     <rect width="${width}" height="${height}" fill="#0a0a0a" />
+
     ${bgImg ? `<image href="${escapeXml(bgImg)}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" opacity="0.90" />` : ""}
+
     <rect width="${width}" height="${height}" fill="url(#bottomGrad)" />
 
-    <!-- Sol Üst Filigran Rozeti -->
+    <!-- Sol Üst Filigran -->
     <g transform="translate(60, 80)">
       <rect x="0" y="0" width="${watermark.length * 16 + 40}" height="46" rx="23" fill="#000000" fill-opacity="0.55" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5" />
       <circle cx="23" cy="23" r="6" fill="#f59e0b" />
@@ -309,6 +326,7 @@ function temizleWikitext(s) {
     .replace(/\[https?:\/\/[^\s\]]+\s+([^\]]+)\]/g, "$1")
     .replace(/'{2,3}/g, "")
     .replace(/\b\d{2,4}x\d{2,4}px\b/gi, " ")
+    .replace(/^[;*]\s*/, "")
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
     .replace(/&quot;/gi, '"')
@@ -325,4 +343,4 @@ function escapeHtml(s) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
-    }
+             }
