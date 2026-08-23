@@ -45,9 +45,9 @@ async function fetchWithRetry(url, options = {}, retries = 2) {
 }
 
 async function runInstagramBot(env, origin = "") {
-  const TELEGRAM_BOT_TOKEN = env.TELEGRAM_BOT_TOKEN || "BURAYA_BOT_TOKENINIZ";
+  const TELEGRAM_BOT_TOKEN = env.TELEGRAM_BOT_TOKEN || "7498614075:AAHepFlPgEvvohNwg-BWUrgAW1OrbxEUXeo";
   // Kendi Telegram kullanıcı/özel chat ID'nizi buraya yazın:
-  const TELEGRAM_CHAT_ID = env.TELEGRAM_CHAT_ID || "BURAYA_OZEL_TELEGRAM_CHAT_ID";
+  const TELEGRAM_CHAT_ID = env.TELEGRAM_CHAT_ID || "1283445630";
   const WATERMARK = env.CHANNEL_WATERMARK || "@sayfa_kullanici_adiniz";
 
   if (!TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN.includes("BURAYA_BOT")) {
