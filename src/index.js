@@ -8,12 +8,12 @@ export default {
 
     if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
 
-    // 1. Instagram Görsellerini Üreten Endpoint
+    // Görsel Üretim
     if (url.pathname === "/image") {
       return handleImageGeneration(url);
     }
 
-    // 2. Webhook Kurulumu (/set-webhook)
+    // Webhook Kurulumu (/set-webhook)
     if (url.pathname === "/set-webhook") {
       const webhookUrl = `${url.origin}/webhook`;
       const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
@@ -23,7 +23,7 @@ export default {
       });
     }
 
-    // 3. Telegram Webhook Gelen Komut İşleyici
+    // Webhook Mesaj Alıcı
     if (url.pathname === "/webhook" && request.method === "POST") {
       try {
         const update = await request.json();
@@ -38,12 +38,12 @@ export default {
           }
         }
       } catch (err) {
-        console.error("Webhook parse hatası:", err);
+        console.error("Webhook hatası:", err);
       }
       return new Response("OK", { status: 200 });
     }
 
-    // Tarayıcıdan manuel tetikleme
+    // Manuel Web Tetikleme
     try {
       const result = await generateAndSendPost(env, AUTHORIZED_CHAT_ID, url.origin);
       return new Response(result || "İşlem tamamlandı.", {
@@ -56,61 +56,37 @@ export default {
 };
 
 const WIKI_HEADERS = {
-  "User-Agent": "WikipediaInstagramBot/3.0 (contact: telegramherokuhesabi3@gmail.com)",
-  "Api-User-Agent": "WikipediaInstagramBot/3.0 (contact: telegramherokuhesabi3@gmail.com)",
+  "User-Agent": "WikipediaInstagramBot/4.0 (contact: telegramherokuhesabi3@gmail.com)",
+  "Api-User-Agent": "WikipediaInstagramBot/4.0 (contact: telegramherokuhesabi3@gmail.com)",
   "Accept": "application/json"
 };
 
-async function fetchWithRetry(url, options = {}, retries = 2) {
-  for (let i = 0; i <= retries; i++) {
-    const res = await fetch(url, options);
-    if (res.status !== 429 && res.status !== 503) return res;
-    await new Promise(r => setTimeout(r, (i + 1) * 1500));
-  }
-  return fetch(url, options);
-}
-
 async function generateAndSendPost(env, chatId, origin) {
-  const cutoff = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
-  const start = new Date("2010-01-01T00:00:00Z");
-
-  const randomMs = Math.floor(Math.random() * (cutoff.getTime() - start.getTime()));
-  const targetDate = new Date(start.getTime() + randomMs);
-  const targetDateStr = targetDate.toISOString().slice(0, 10);
+  // Rastgele yıl ve ay seçerek geniş havuz oluştur (2010 - 2024 arası)
+  const randomYear = Math.floor(Math.random() * (2024 - 2011 + 1)) + 2011;
+  const randomMonth = String(Math.floor(Math.random() * 12) + 1).padStart(2, "0");
 
   const listUrl = new URL("https://tr.wikipedia.org/w/api.php");
   listUrl.search = new URLSearchParams({
     action: "query",
     list: "allpages",
     apnamespace: "4",
-    apprefix: "Biliyor_muydunuz?/",
-    aplimit: "50",
+    apprefix: `Biliyor_muydunuz?/${randomYear}`,
+    aplimit: "250",
     format: "json",
-    formatversion: "2",
-    apfrom: `Biliyor_muydunuz?/${targetDateStr}`
+    formatversion: "2"
   });
 
-  const listRes = await fetchWithRetry(listUrl, { headers: WIKI_HEADERS });
+  const listRes = await fetch(listUrl, { headers: WIKI_HEADERS });
   const listData = await listRes.json();
   const pages = listData?.query?.allpages || [];
 
-  const candidates = pages
-    .map(p => p.title || "")
-    .map(title => {
-      const m = title.match(/(\d{4})-(\d{2})-(\d{2})$/);
-      return m ? { title, date: `${m[1]}-${m[2]}-${m[3]}` } : null;
-    })
-    .filter(Boolean)
-    .filter(x => new Date(x.date).getTime() < cutoff.getTime());
-
-  if (!candidates.length) return "Aday sayfa bulunamadı.";
-
-  const shuffled = candidates.sort(() => 0.5 - Math.random());
+  const candidates = pages.sort(() => 0.5 - Math.random());
   let selected = null;
-  let rawWikitext = "";
+  let cleanText = "";
   let imageUrl = null;
 
-  for (const item of shuffled) {
+  for (const item of candidates) {
     if (env.DB) {
       const row = await env.DB.prepare("SELECT page_title FROM sent_facts WHERE page_title = ?")
         .bind(item.title)
@@ -124,22 +100,37 @@ async function generateAndSendPost(env, chatId, origin) {
       page: item.title,
       format: "json",
       formatversion: "2",
-      prop: "wikitext",
+      prop: "wikitext|images",
       redirects: "1"
     });
 
-    const parseRes = await fetchWithRetry(parseUrl, { headers: WIKI_HEADERS });
+    const parseRes = await fetch(parseUrl, { headers: WIKI_HEADERS });
     const parseData = await parseRes.json();
     const content = parseData?.parse?.wikitext || "";
+    const imagesList = parseData?.parse?.images || [];
 
-    const imageMatch = content.match(/\[\[(?:Dosya|File|Media):([^|\]]+)/i);
-    if (imageMatch && imageMatch[1]) {
-      const resolvedUrl = await fetchWikipediaImageUrl(imageMatch[1].trim());
+    // Görsel dosya adını tespit et (Resim, Dosya, File veya parse images listesi)
+    let fileName = null;
+    const fileMatch = content.match(/\[\[(?:Dosya|Resim|File|Image):([^|\]\n]+)/i);
+    if (fileMatch && fileMatch[1]) {
+      fileName = fileMatch[1].trim();
+    } else if (imagesList.length > 0) {
+      const validImg = imagesList.find(img => !img.toLowerCase().endsWith(".svg") && !img.toLowerCase().includes("icon"));
+      if (validImg) fileName = validImg;
+    }
+
+    if (fileName) {
+      const resolvedUrl = await fetchWikipediaImageUrl(fileName);
       if (resolvedUrl) {
-        selected = item;
-        rawWikitext = content;
-        imageUrl = resolvedUrl;
-        break;
+        let text = temizleWikitext(content);
+        text = text.replace(/^(?:Vikipedi|Biliyor muydu(?:nuz)?\??|Arşiv|Ana sayfa)[^.!?]*[.!?]?\s*/i, "").trim();
+
+        if (text && text.length > 25) {
+          selected = item;
+          cleanText = text;
+          imageUrl = resolvedUrl;
+          break;
+        }
       }
     }
   }
@@ -150,16 +141,12 @@ async function generateAndSendPost(env, chatId, origin) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         chat_id: chatId,
-        text: "⚠️ Görselli yeni bir içerik bulunamadı. Lütfen tekrar /hazirla yazın."
+        text: "⚠️ Arşiv taranıyor, lütfen 2 saniye sonra tekrar /hazirla yazın."
       })
     });
-    return "Görselli içerik bulunamadı.";
+    return "Tekrar denenecek.";
   }
 
-  let cleanText = temizleWikitext(rawWikitext);
-  cleanText = cleanText.replace(/^(?:Vikipedi|Biliyor muydu(?:nuz)?\??|Arşiv|Ana sayfa)[^.!?]*[.!?]?\s*/i, "").trim();
-
-  // Instagram Açıklama Taslağı
   const instagramCaption = 
 `💡 Bunu biliyor muydunuz?
 
@@ -179,32 +166,30 @@ ${cleanText}
   const squareUrl = `${origin}/image?text=${encodeURIComponent(cleanText)}&img=${encodeURIComponent(imageUrl)}&wm=${encodeURIComponent(WATERMARK)}&ratio=square`;
   const portraitUrl = `${origin}/image?text=${encodeURIComponent(cleanText)}&img=${encodeURIComponent(imageUrl)}&wm=${encodeURIComponent(WATERMARK)}&ratio=portrait`;
 
-  // 2 Hazırlanmış Görseli Albüm Olarak Gönder (sendMediaGroup)
-  const mediaGroupPayload = {
-    chat_id: chatId,
-    media: [
-      {
-        type: "photo",
-        media: squareUrl,
-        caption: telegramCaptionText,
-        parse_mode: "HTML"
-      },
-      {
-        type: "photo",
-        media: portraitUrl
-      }
-    ]
-  };
-
+  // 2 Görseli Albüm Halinde Gönder
   const albumRes = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMediaGroup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(mediaGroupPayload)
+    body: JSON.stringify({
+      chat_id: chatId,
+      media: [
+        {
+          type: "photo",
+          media: squareUrl,
+          caption: telegramCaptionText,
+          parse_mode: "HTML"
+        },
+        {
+          type: "photo",
+          media: portraitUrl
+        }
+      ]
+    })
   });
 
   const albumData = await albumRes.json();
 
-  // Telegram uzaktan SVG URL'i kabul etmezse doğrudan 2 ayrı fotoğraflı/dökümanlı mesaj olarak ilet
+  // Telegram uzaktan SVG URL'ini albüm olarak almazsa doğrudan 2 görseli tek tek ilet
   if (!albumData.ok) {
     await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument`, {
       method: "POST",
@@ -212,7 +197,7 @@ ${cleanText}
       body: JSON.stringify({
         chat_id: chatId,
         document: squareUrl,
-        caption: "🖼 <b>Instagram Kare Formatı (1:1)</b>\n\n" + telegramCaptionText,
+        caption: "🖼 <b>Instagram Kare (1:1)</b>\n\n" + telegramCaptionText,
         parse_mode: "HTML"
       })
     });
@@ -223,7 +208,7 @@ ${cleanText}
       body: JSON.stringify({
         chat_id: chatId,
         document: portraitUrl,
-        caption: "🖼 <b>Instagram Portre Formatı (4:5)</b>",
+        caption: "🖼 <b>Instagram Portre (4:5)</b>",
         parse_mode: "HTML"
       })
     });
@@ -239,7 +224,7 @@ ${cleanText}
   return `Başarılı! Gönderildi: ${selected.title}`;
 }
 
-// Görsel Render Motoru (SVG Tasarımı)
+// Görsel Render Motoru
 function handleImageGeneration(url) {
   const text = url.searchParams.get("text") || "Bunu biliyor muydunuz?";
   const bgImg = url.searchParams.get("img") || "";
@@ -342,20 +327,21 @@ function escapeXml(s) {
 
 async function fetchWikipediaImageUrl(fileName) {
   try {
-    const ext = fileName.split(".").pop().toLowerCase();
+    const cleanName = fileName.replace(/^(?:Dosya|Resim|File|Image):/i, "").trim();
+    const ext = cleanName.split(".").pop().toLowerCase();
     if (["svg", "tif", "tiff", "ogg", "ogv", "pdf"].includes(ext)) return null;
 
     const imgApiUrl = new URL("https://tr.wikipedia.org/w/api.php");
     imgApiUrl.search = new URLSearchParams({
       action: "query",
-      titles: `File:${fileName}`,
+      titles: `File:${cleanName}`,
       prop: "imageinfo",
       iiprop: "url",
       iiurlwidth: "1200",
       format: "json",
       formatversion: "2"
     });
-    const res = await fetchWithRetry(imgApiUrl, { headers: WIKI_HEADERS });
+    const res = await fetch(imgApiUrl, { headers: WIKI_HEADERS });
     const data = await res.json();
     const pages = data?.query?.pages;
     if (pages && pages[0]?.imageinfo && pages[0].imageinfo[0]) {
@@ -374,7 +360,7 @@ function temizleWikitext(s) {
     .replace(/<gallery[\s\S]*?<\/gallery>/gi, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/\{\{[^{}]*\}\}/g, " ")
-    .replace(/\[\[(?:Dosya|File|Media):[^\]]+\]\]/gi, " ")
+    .replace(/\[\[(?:Dosya|Resim|File|Media):[^\]]+\]\]/gi, " ")
     .replace(/\[\[([^|\]]+)\|([^\]]+)\]\]/g, "$2")
     .replace(/\[\[([^\]]+)\]\]/g, "$1")
     .replace(/\[https?:\/\/[^\s\]]+\s+([^\]]+)\]/g, "$1")
@@ -405,4 +391,4 @@ function simpleHash(str) {
     hash |= 0;
   }
   return String(hash);
-      }
+    }
